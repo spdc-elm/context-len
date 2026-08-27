@@ -12,18 +12,36 @@
 
 ## 本地运行
 
-要求 Go 1.26+、Node.js 和 npm。只使用本地 mock upstream 时：
+最简单的启动方式是：
 
 ```bash
-make bootstrap
-CONTEXT_LENS_UPSTREAM=http://127.0.0.1:9000 make run
-# 另一个终端
-make frontend-dev
+cd /Users/littlefairy/projects/context-lens
+./scripts/start-local.sh
+```
+
+脚本会自动启动本地 mock upstream、Go gateway、workspace API 和 Vite 工作台，并在 macOS 上打开浏览器。按 `Ctrl-C` 会停止本轮启动的进程。运行日志只写入被忽略的 `.context-lens-run/` 目录。
+
+首次启动会从 [`config.example.json`](config.example.json) 创建未跟踪的 `config.local.json`，并设置为仅当前用户可读。实际运行配置只有两个字段：
+
+```json
+{
+  "base_url": "http://127.0.0.1:19091",
+  "api_key": ""
+}
+```
+
+`api_key` 只在 Go 进程内读取，并按 `Authorization: Bearer <api_key>` 注入上游，不会进入 workspace snapshot、SSE、日志或前端。默认 `base_url` 指向仓库内的 mock upstream。若改成非 loopback 地址，默认会拒绝；只有明确设置 `CONTEXT_LENS_ALLOW_NON_LOOPBACK=1` 才允许启动外部 upstream。
+
+也可以不使用启动脚本，直接运行：
+
+```bash
+CONTEXT_LENS_CONFIG=/absolute/path/to/config.local.json \
+go run ./cmd/context-lens
 ```
 
 Go 服务默认监听 `127.0.0.1:8080`；Vite 工作台默认监听 `127.0.0.1:5173`，并把 `/api` 转发到 Go 服务。LLM 协议入口保持原路径：`/v1/responses`、`/v1/chat/completions`、`/v1/messages` 和 `/v1/models`。工作台 API 位于 `/api`。
 
-`CONTEXT_LENS_UPSTREAM` 必须显式提供；可选的 `CONTEXT_LENS_UPSTREAM_BEARER` 或 `CONTEXT_LENS_UPSTREAM_API_KEY` 只在服务端进程内注入，二者不能同时设置。项目不拥有默认 model，不会向真实第三方发送探测请求。完整本地反馈命令：
+完整本地反馈命令：
 
 ```bash
 make test

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"context-lens/backend/app"
+	"context-lens/backend/config"
 	"context-lens/backend/gateway"
 	"context-lens/backend/persistence"
 	"context-lens/backend/transport"
@@ -24,19 +25,37 @@ import (
 
 func main() {
 	addr := flag.String("addr", configuredAddr(), "HTTP listen address")
+	configPath := flag.String("config", configuredConfigPath(), "JSON runtime config path (base_url and api_key)")
 	flag.Parse()
 	if err := validateListenAddr(*addr); err != nil {
 		log.Fatalf("invalid listen address: %v", err)
 	}
 
+	var fileConfig config.RuntimeConfig
+	if strings.TrimSpace(*configPath) != "" {
+		var err error
+		fileConfig, err = config.LoadRuntimeConfig(*configPath)
+		if err != nil {
+			log.Fatalf("invalid runtime config: %v", err)
+		}
+	}
+
 	var workspaceServer *workspace.Server
 	var gatewayServer *gateway.Gateway
 	serverConfig := app.Config{Addr: *addr}
-	if upstream := strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM")); upstream != "" {
+	upstream := fileConfig.BaseURL
+	if upstream == "" {
+		upstream = strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM"))
+	}
+	if upstream != "" {
 		var err error
 		transportConfig := transport.Config{BaseURLString: upstream, HeaderPolicy: transport.DefaultHeaderPolicy()}
-		bearer := strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM_BEARER"))
-		apiKey := strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM_API_KEY"))
+		bearer := fileConfig.APIKey
+		apiKey := ""
+		if bearer == "" {
+			bearer = strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM_BEARER"))
+			apiKey = strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM_API_KEY"))
+		}
 		if bearer != "" && apiKey != "" {
 			log.Fatal("configure only one upstream credential scheme")
 		}
@@ -47,8 +66,9 @@ func main() {
 			transportConfig.HeaderPolicy.Additional = http.Header{"X-API-Key": {apiKey}}
 		}
 		gatewayServer, err = gateway.New(gateway.Config{
-			Transport:    transportConfig,
-			MaxBodyBytes: 128 << 20,
+			Transport:        transportConfig,
+			AllowNonLoopback: os.Getenv("CONTEXT_LENS_ALLOW_NON_LOOPBACK") == "1",
+			MaxBodyBytes:     128 << 20,
 			StoreConfig: persistence.Config{
 				MaxArtifactBytes: 128 << 20,
 				MaxTotalBytes:    2 << 30,
@@ -133,6 +153,16 @@ func validateListenAddr(addr string) error {
 		return fmt.Errorf("context-lens must listen on loopback, got %q", host)
 	}
 	return nil
+}
+
+func configuredConfigPath() string {
+	if value := strings.TrimSpace(os.Getenv("CONTEXT_LENS_CONFIG")); value != "" {
+		return value
+	}
+	if _, err := os.Stat("config.local.json"); err == nil {
+		return "config.local.json"
+	}
+	return ""
 }
 
 func configuredAddr() string {

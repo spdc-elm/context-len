@@ -26,3 +26,6 @@ tmp/
 .DS_Store
 .vscode/
 .idea/
+
+config.local.json
+.context-lens-run/

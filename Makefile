@@ -1,4 +1,4 @@
-.PHONY: bootstrap test test-go test-frontend build-frontend run frontend-dev
+.PHONY: bootstrap test test-go test-frontend build-frontend run frontend-dev start-local
 
 bootstrap:
 	cd frontend && npm ci --no-audit --no-fund
@@ -18,5 +18,5 @@ build-frontend:
 run:
 	go run ./cmd/context-lens
 
-frontend-dev:
-	cd frontend && npm run dev
+start-local:
+	./scripts/start-local.sh
