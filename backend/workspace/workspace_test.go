@@ -154,6 +154,13 @@ func TestArtifactRangeSearchAndDownload(t *testing.T) {
 	}
 
 	recorder = httptest.NewRecorder()
+	serverSmall := New(Config{Artifacts: store, MaxArtifactBytes: 20})
+	serverSmall.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/artifacts/artifact-1?start=0&end=1048576", nil))
+	if recorder.Code != http.StatusPartialContent || recorder.Body.String() != "0123456789" {
+		t.Fatalf("clamped preview = status %d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/artifacts/artifact-1?start=0&end=5&download=true", nil))
 	if recorder.Code != http.StatusPartialContent || !strings.HasPrefix(recorder.Header().Get("Content-Disposition"), "attachment;") {
 		t.Fatalf("download response = status %d disposition %q", recorder.Code, recorder.Header().Get("Content-Disposition"))

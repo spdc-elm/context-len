@@ -613,8 +613,13 @@ func parseArtifactRange(r *http.Request, size int64) (int64, int64, bool, error)
 		}
 		return start, end, true, nil
 	}
-	if start > size || end > size || end < start {
+	if start > size || end < start {
 		return 0, 0, false, ErrArtifactRange
+	}
+	// An end beyond the blob is a valid bounded preview request; clamp it to
+	// the available bytes rather than making the browser know the size first.
+	if end > size {
+		end = size
 	}
 	// Explicit `end` is exclusive, as used by the browser contract.  An
 	// omitted end means the end of the blob.
