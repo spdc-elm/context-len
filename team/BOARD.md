@@ -25,6 +25,8 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 | 参考 benchmark runner | expected-red | 两个 Harbor 安装模拟测试在当前 macOS 环境失败；与本项目 proxy 核心无关 | 团队决定复用该模块时重开并修复 |
 | 官方协议资料 | verified | OpenAI OpenAPI、Anthropic API / SDK 已定位 | 官方结构与本机样本冲突时重开 |
 | 三协议真实样本 | verified | 本机只读目录包含三种 request / SSE 形态 | 选择脱敏 fixture 时复核具体样本 |
+| Canonical docs audit | verified | 独立 worker 只读检查四份文档，无 Critical；范围、intent、secret 边界和 kickoff 可恢复性通过 | leader 修改 intent 或资源约束 |
+| Fixture provenance manifest | ready | `docs/protocol-contract.md` 已定义 `tests/fixtures/manifest.json` 的最小字段；具体样本留给 RUN | 选择首批 fixture 时复核脱敏 |
 | Mock upstream | expected-red | 语义已由 charter 确认，留给 RUN 实现 | handler 和 transport 能跑通后转 verified |
 | Browser UX loop | expected-red | 前端尚未初始化，留给 RUN 实现 | 工作台可启动后转 verified |
 | 真实第三方 endpoint | leader-accepted-deferred | MVP 使用本地 mock；任何真实调用需 leader 授权 | leader 提供安全 provision 和允许的 probe |
