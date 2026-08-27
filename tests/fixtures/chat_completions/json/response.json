@@ -1,0 +1,46 @@
+{
+  "id": "chatcmpl_fixture_json_001",
+  "object": "chat.completion",
+  "created": 1710000010,
+  "model": "fixture-chat-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "tool_fixture_b",
+            "type": "function",
+            "function": {
+              "name": "lookup_fixture",
+              "arguments": "{\"key\":\"beta\"}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    },
+    {
+      "index": 1,
+      "message": {
+        "role": "assistant",
+        "content": "fixture alternate answer",
+        "refusal": null
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 31,
+    "completion_tokens": 9,
+    "total_tokens": 40
+  },
+  "system_fingerprint": "fixture-fingerprint",
+  "unknown_response_field": {
+    "preserve": true
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "id": "resp_fixture_json_001",
+  "object": "response",
+  "created_at": 1710000000,
+  "status": "completed",
+  "model": "fixture-responses-model",
+  "output": [
+    {
+      "id": "rs_fixture_json_001",
+      "type": "reasoning",
+      "status": "completed",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "A concise fixture answer is sufficient."
+        }
+      ],
+      "encrypted_content": "fixture-reasoning-token"
+    },
+    {
+      "id": "msg_fixture_json_001",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Fixture response is unchanged.",
+          "annotations": []
+        }
+      ]
+    },
+    {
+      "id": "fc_fixture_json_001",
+      "type": "function_call",
+      "status": "completed",
+      "call_id": "call_fixture_1",
+      "name": "lookup_fixture",
+      "arguments": "{\"key\":\"alpha\"}"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "usage": {
+    "input_tokens": 42,
+    "output_tokens": 17,
+    "total_tokens": 59
+  },
+  "metadata": {
+    "fixture_case": "responses-json"
+  },
+  "unknown_response_field": {
+    "preserve": true
+  }
+}

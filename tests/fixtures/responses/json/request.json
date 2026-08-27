@@ -1,0 +1,68 @@
+{
+  "model": "fixture-responses-model",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Summarize this fixture-safe payload."
+        },
+        {
+          "type": "input_image",
+          "detail": "low",
+          "image_url": "https://example.invalid/context-lens-fixture.png"
+        }
+      ]
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_fixture_1",
+      "output": "{\"ok\":true}"
+    }
+  ],
+  "instructions": "Return a short deterministic answer.",
+  "tools": [
+    {
+      "type": "function",
+      "name": "lookup_fixture",
+      "description": "Return a value from the local fixture table.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "reasoning": {
+    "effort": "low",
+    "summary": "auto"
+  },
+  "text": {
+    "format": {
+      "type": "text"
+    }
+  },
+  "metadata": {
+    "fixture_case": "responses-json",
+    "unknown_hint": "preserve-me"
+  },
+  "stream": false,
+  "store": false,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "provider_extension": {
+    "opaque_number": 17
+  }
+}

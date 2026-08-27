@@ -1,0 +1,40 @@
+{
+  "model": "fixture-responses-model",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Stream a fixture answer and preserve every event."
+        }
+      ]
+    }
+  ],
+  "instructions": "Use the fixture stream.",
+  "reasoning": {
+    "effort": "low",
+    "summary": "auto"
+  },
+  "tools": [
+    {
+      "type": "function",
+      "name": "lookup_fixture",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "stream": true,
+  "store": false,
+  "metadata": {
+    "fixture_case": "responses-sse",
+    "unknown_hint": "preserve-me"
+  }
+}

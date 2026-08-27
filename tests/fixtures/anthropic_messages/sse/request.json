@@ -1,0 +1,36 @@
+{
+  "model": "fixture-anthropic-model",
+  "max_tokens": 128,
+  "system": "Stream a fixture answer.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Use the fixture tool, then stream text."
+    }
+  ],
+  "tools": [
+    {
+      "name": "lookup_fixture",
+      "description": "Return a value from the local fixture table.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ],
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 64
+  },
+  "metadata": {
+    "fixture_case": "anthropic-sse"
+  },
+  "stream": true,
+  "unknown_provider_field": {
+    "preserve": true
+  }
+}

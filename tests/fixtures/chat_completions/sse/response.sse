@@ -1,0 +1,16 @@
+: context-lens chat completions fixture
+id: chat-stream-fixture-1
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null},{"index":1,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"content":"fixture "},"finish_reason":null},{"index":1,"delta":{"content":"alternate "},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"content":"tool result"},"finish_reason":null},{"index":1,"delta":{"content":"answer"},"finish_reason":null}],"unknown_chunk_field":{"preserve":true}}
+
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"tool_fixture_stream","type":"function","function":{"name":"lookup_fixture","arguments":"{\\\"key\\\":\\\"beta\\\"}"}}]},"finish_reason":null},{"index":1,"delta":{},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"},{"index":1,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[],"usage":{"prompt_tokens":18,"completion_tokens":8,"total_tokens":26},"unknown_usage_field":{"preserve":true}}
+
+data: [DONE]
+

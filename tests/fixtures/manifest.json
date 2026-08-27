@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "description": "Minimal protocol fixtures for local proxy and inspector tests. All values are synthetic; relay material was read-only shape guidance.",
+  "fixtures": [
+    {
+      "id": "responses-json-basic",
+      "fixture_set": "responses-json-basic",
+      "protocol": "responses",
+      "request_shape": "json",
+      "endpoint": "/v1/responses",
+      "path": "responses/json/response.json",
+      "size": 1209,
+      "sha256": "cfef4128d09384fece0f8880f9106202c83fbbab2020dc6f21d30872301671ae",
+      "files": [
+        {
+          "role": "request",
+          "path": "responses/json/request.json",
+          "size": 1400,
+          "sha256": "d71c8c92fca36bf2d2a43ed8746562c3bb258578dcc4908bfbd91fb4c37291ac"
+        },
+        {
+          "role": "response",
+          "path": "responses/json/response.json",
+          "size": 1209,
+          "sha256": "cfef4128d09384fece0f8880f9106202c83fbbab2020dc6f21d30872301671ae"
+        }
+      ],
+      "source_class": "local-relay-debug",
+      "source_path_pattern": "20260522/**/raw-client-input.json + raw-output.txt",
+      "redaction": "shape-only synthesis with shortened fixture text; no credentials or complete context",
+      "raw_bytes_status": "derived",
+      "checks": [
+        "secret-scan",
+        "json-parse"
+      ],
+      "provenance": {
+        "source_class": "local-relay-debug",
+        "source_path_pattern": "20260522/**/raw-client-input.json + raw-output.txt",
+        "derivation": "Synthetic values retain protocol field/event shape only; checked-in bytes are not original captures.",
+        "raw_bytes_status": "derived"
+      }
+    },
+    {
+      "id": "responses-sse-rich",
+      "fixture_set": "responses-sse-rich",
+      "protocol": "responses",
+      "request_shape": "streaming",
+      "endpoint": "/v1/responses",
+      "path": "responses/sse/response.sse",
+      "size": 2959,
+      "sha256": "d60c1daacd88cffe5798f78032a2eccbec94cd2aad74766180c8448c485faf70",
+      "files": [
+        {
+          "role": "request",
+          "path": "responses/sse/request.json",
+          "size": 743,
+          "sha256": "40937f7c120572f4839a31b273ee1f02dafedcf5ff9bcfe94b92be48f565f27c"
+        },
+        {
+          "role": "response",
+          "path": "responses/sse/response.sse",
+          "size": 2959,
+          "sha256": "d60c1daacd88cffe5798f78032a2eccbec94cd2aad74766180c8448c485faf70"
+        }
+      ],
+      "source_class": "local-relay-debug",
+      "source_path_pattern": "20260522/**/raw-input.json + raw-output.txt",
+      "redaction": "shape-only synthesis with shortened fixture text; no credentials or complete context",
+      "raw_bytes_status": "derived",
+      "checks": [
+        "secret-scan",
+        "json-parse",
+        "sse-parse"
+      ],
+      "provenance": {
+        "source_class": "local-relay-debug",
+        "source_path_pattern": "20260522/**/raw-input.json + raw-output.txt",
+        "derivation": "Synthetic values retain protocol field/event shape only; checked-in bytes are not original captures.",
+        "raw_bytes_status": "derived"
+      }
+    },
+    {
+      "id": "chat-completions-json-rich",
+      "fixture_set": "chat-completions-json-rich",
+      "protocol": "chat_completions",
+      "request_shape": "json",
+      "endpoint": "/v1/chat/completions",
+      "path": "chat_completions/json/response.json",
+      "size": 985,
+      "sha256": "03928165555fa0b6ea99eaea431e05432bd82f9bbea38793c2abeed27e3fcd1f",
+      "files": [
+        {
+          "role": "request",
+          "path": "chat_completions/json/request.json",
+          "size": 2043,
+          "sha256": "79a5468dae3311be1b23d16a1c171a101d7ddce46b15b299a0f856d6780f7eda"
+        },
+        {
+          "role": "response",
+          "path": "chat_completions/json/response.json",
+          "size": 985,
+          "sha256": "03928165555fa0b6ea99eaea431e05432bd82f9bbea38793c2abeed27e3fcd1f"
+        }
+      ],
+      "source_class": "local-relay-debug",
+      "source_path_pattern": "20260502/**/raw-client-input.json + raw-output.txt",
+      "redaction": "shape-only synthesis with shortened fixture text; no credentials or complete context",
+      "raw_bytes_status": "derived",
+      "checks": [
+        "secret-scan",
+        "json-parse"
+      ],
+      "provenance": {
+        "source_class": "local-relay-debug",
+        "source_path_pattern": "20260502/**/raw-client-input.json + raw-output.txt",
+        "derivation": "Synthetic values retain protocol field/event shape only; checked-in bytes are not original captures.",
+        "raw_bytes_status": "derived"
+      }
+    },
+    {
+      "id": "chat-completions-sse-multi-choice",
+      "fixture_set": "chat-completions-sse-multi-choice",
+      "protocol": "chat_completions",
+      "request_shape": "streaming",
+      "endpoint": "/v1/chat/completions",
+      "path": "chat_completions/sse/response.sse",
+      "size": 1808,
+      "sha256": "5d54988a809008159a9d4b064bfc6dcd56cac01e1db826e0d1c9166ef55b0d77",
+      "files": [
+        {
+          "role": "request",
+          "path": "chat_completions/sse/request.json",
+          "size": 649,
+          "sha256": "98fa81c9368ffc3d10010adec13a7958f094035772a674ce4e5a50e93f3c7938"
+        },
+        {
+          "role": "response",
+          "path": "chat_completions/sse/response.sse",
+          "size": 1808,
+          "sha256": "5d54988a809008159a9d4b064bfc6dcd56cac01e1db826e0d1c9166ef55b0d77"
+        }
+      ],
+      "source_class": "local-relay-debug",
+      "source_path_pattern": "20260502/**/raw-input.json + raw-output.txt",
+      "redaction": "shape-only synthesis with shortened fixture text; no credentials or complete context",
+      "raw_bytes_status": "derived",
+      "checks": [
+        "secret-scan",
+        "json-parse",
+        "sse-parse"
+      ],
+      "provenance": {
+        "source_class": "local-relay-debug",
+        "source_path_pattern": "20260502/**/raw-input.json + raw-output.txt",
+        "derivation": "Synthetic values retain protocol field/event shape only; checked-in bytes are not original captures.",
+        "raw_bytes_status": "derived"
+      }
+    },
+    {
+      "id": "anthropic-messages-json-rich",
+      "fixture_set": "anthropic-messages-json-rich",
+      "protocol": "anthropic_messages",
+      "request_shape": "json",
+      "endpoint": "/v1/messages",
+      "path": "anthropic_messages/json/response.json",
+      "size": 949,
+      "sha256": "5bbcaab37ebf8bddf689ad95835658c4d8630856f40a47a1c4b89db67b880e73",
+      "files": [
+        {
+          "role": "request",
+          "path": "anthropic_messages/json/request.json",
+          "size": 2069,
+          "sha256": "61fd7415ad6c53b68f70bddbd924dbc4bc4b1ba445e17836ed6ac416af71e472"
+        },
+        {
+          "role": "response",
+          "path": "anthropic_messages/json/response.json",
+          "size": 949,
+          "sha256": "5bbcaab37ebf8bddf689ad95835658c4d8630856f40a47a1c4b89db67b880e73"
+        }
+      ],
+      "source_class": "local-relay-debug",
+      "source_path_pattern": "20260525/**/raw-client-input.json + raw-output.txt",
+      "redaction": "shape-only synthesis with shortened fixture text; no credentials or complete context",
+      "raw_bytes_status": "derived",
+      "checks": [
+        "secret-scan",
+        "json-parse"
+      ],
+      "provenance": {
+        "source_class": "local-relay-debug",
+        "source_path_pattern": "20260525/**/raw-client-input.json + raw-output.txt",
+        "derivation": "Synthetic values retain protocol field/event shape only; checked-in bytes are not original captures.",
+        "raw_bytes_status": "derived"
+      }
+    },
+    {
+      "id": "anthropic-messages-sse-blocks",
+      "fixture_set": "anthropic-messages-sse-blocks",
+      "protocol": "anthropic_messages",
+      "request_shape": "streaming",
+      "endpoint": "/v1/messages",
+      "path": "anthropic_messages/sse/response.sse",
+      "size": 1843,
+      "sha256": "c450f5ac81c4bdc3c3c99eeb14975cf8f9d623957068dd272c9dea264e4bb7a4",
+      "files": [
+        {
+          "role": "request",
+          "path": "anthropic_messages/sse/request.json",
+          "size": 698,
+          "sha256": "2876791a6c653eaa7ad75cca62519877e1c422e1a86687959ed170e14281f46f"
+        },
+        {
+          "role": "response",
+          "path": "anthropic_messages/sse/response.sse",
+          "size": 1843,
+          "sha256": "c450f5ac81c4bdc3c3c99eeb14975cf8f9d623957068dd272c9dea264e4bb7a4"
+        }
+      ],
+      "source_class": "local-relay-debug",
+      "source_path_pattern": "20260526/**/raw-input.json + raw-output.txt",
+      "redaction": "shape-only synthesis with shortened fixture text; no credentials or complete context",
+      "raw_bytes_status": "derived",
+      "checks": [
+        "secret-scan",
+        "json-parse",
+        "sse-parse"
+      ],
+      "provenance": {
+        "source_class": "local-relay-debug",
+        "source_path_pattern": "20260526/**/raw-input.json + raw-output.txt",
+        "derivation": "Synthetic values retain protocol field/event shape only; checked-in bytes are not original captures.",
+        "raw_bytes_status": "derived"
+      }
+    },
+    {
+      "id": "models-list-transparent",
+      "fixture_set": "models-list-transparent",
+      "protocol": "models",
+      "request_shape": "json",
+      "endpoint": "/v1/models",
+      "path": "models/response.json",
+      "size": 426,
+      "sha256": "88e8332506921c51e3e0cea971288da4b571cdd8dfbf653b1a418978748f9a57",
+      "files": [
+        {
+          "role": "response",
+          "path": "models/response.json",
+          "size": 426,
+          "sha256": "88e8332506921c51e3e0cea971288da4b571cdd8dfbf653b1a418978748f9a57"
+        }
+      ],
+      "source_class": "synthetic-local-mock",
+      "source_path_pattern": "local mock /v1/models response",
+      "redaction": "shape-only synthesis with shortened fixture text; no credentials or complete context",
+      "raw_bytes_status": "synthetic",
+      "checks": [
+        "secret-scan",
+        "json-parse"
+      ],
+      "provenance": {
+        "source_class": "synthetic-local-mock",
+        "source_path_pattern": "local mock /v1/models response",
+        "derivation": "Synthetic values retain protocol field/event shape only; checked-in bytes are not original captures.",
+        "raw_bytes_status": "synthetic"
+      }
+    }
+  ]
+}

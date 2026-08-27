@@ -1,0 +1,35 @@
+{
+  "model": "fixture-chat-model",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Stream two choices and a tool call from this fixture."
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "lookup_fixture",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true,
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "temperature": 0,
+  "unknown_provider_field": {
+    "keep": "this"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "fixture-model-alpha",
+      "object": "model",
+      "created": 1710000030,
+      "owned_by": "context-lens-fixture",
+      "permission": []
+    },
+    {
+      "id": "fixture-model-beta",
+      "object": "model",
+      "created": 1710000031,
+      "owned_by": "context-lens-fixture",
+      "permission": []
+    }
+  ],
+  "unknown_models_field": {
+    "preserve": true
+  }
+}

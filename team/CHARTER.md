@@ -1,13 +1,15 @@
 # Team Charter
 
-状态：**PREPARE**。本文件是团队运行时的 canonical state；manager 是唯一维护者。产品实现只有在 leader 明确发送 kickoff 后才开始。
+状态：**RUN**。本文件是团队运行时的 canonical state；manager 是唯一维护者。产品实现已获 leader 明确 kickoff 授权。
 
 ## Workspace identity
 
 - 项目：`context-lens`
 - 绝对工作区：`/Users/littlefairy/projects/context-lens`
 - Git：独立本地仓库，branch `main`
-- PREPARE 基线：`6c4c4c614a7880246f33659f6158d2e5733591e2`；空仓库初始化后由 manager 写入本 charter、board 和协议契约文档
+- kickoff 检查时 HEAD：`0eb805512bb4938bf750ad1ae65873d3e8f505fb`；branch `main`
+- kickoff 检查时已有 dirty state：`team/CHARTER.md` 有 leader/工作区修改，内容为在 MVP 测试条目加入“遵循奥卡姆剃刀原则，不要为了测试而测试”；已保留，未覆盖。
+- manager 冻结的公共运行时接缝：`docs/runtime-contract.md`
 - 参考实现（只读）：`/Users/littlefairy/projects/Harness_model_coupling/ChatAPI`
 - 参考实现基线：`f65a7afeedf6984f26cff637c17b8affed17d57a`
 - 真实抓包材料（只读）：`/Users/littlefairy/projects/new-api/logs/relay-debug`
@@ -32,7 +34,7 @@
 - JSON body、SSE body、headers 和 HTTP 元数据的观察
 - 面向人的消息、内容块、工具、reasoning、响应 item 和 SSE event 视图
 - 一个通用上游 profile；profile 选择端点和认证，不拥有或改写请求中的 model
-- 本地 mock upstream、协议 fixture、wire hash 和关键交互测试
+- 本地 mock upstream、协议 fixture、wire hash 和关键交互测试，但遵循奥卡姆剃刀原则，不要为了测试而测试。
 
 没有进入以上清单的能力不主动加入首个交付。不要为了“完整”添加未经需求驱动的产品面或抽象。
 

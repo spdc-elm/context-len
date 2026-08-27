@@ -1,0 +1,45 @@
+{
+  "id": "msg_fixture_json_001",
+  "type": "message",
+  "role": "assistant",
+  "model": "fixture-anthropic-model",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "fixture private reasoning",
+      "signature": "fixture-signature"
+    },
+    {
+      "type": "redacted_thinking",
+      "data": "fixture-redacted-thinking"
+    },
+    {
+      "type": "text",
+      "text": "Fixture response is unchanged.",
+      "citations": null
+    },
+    {
+      "type": "tool_use",
+      "id": "toolu_fixture_2",
+      "name": "lookup_fixture",
+      "input": {
+        "key": "beta"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 37,
+    "output_tokens": 22,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  },
+  "container": {
+    "id": "container_fixture",
+    "expires_at": "2099-01-01T00:00:00Z"
+  },
+  "unknown_response_field": {
+    "preserve": true
+  }
+}

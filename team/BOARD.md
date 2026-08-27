@@ -1,6 +1,6 @@
 # Team Board
 
-状态：**PREPARE — kickoff 待 leader 发送**
+状态：**RUN — T0–T7 verified；T8 final review/browser/clean-state 验收中**
 
 manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
@@ -13,7 +13,9 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 - PREPARE 前 dirty state：空目录
 - 当前 PREPARE 写入：`README.md`、`team/CHARTER.md`、`team/BOARD.md`、`docs/protocol-contract.md`
 
-## Readiness
+- kickoff 时 manager 已核对 HEAD `0eb805512bb4938bf750ad1ae65873d3e8f505fb`、branch `main`；发现并保留 `team/CHARTER.md` 的已有 dirty 修改（测试遵循奥卡姆剃刀原则）。
+- `docs/runtime-contract.md` 已由 manager 冻结 wire/artifact/exchange/event DTO，作为 T1/T2/T4/T6 接缝。
+
 
 | Feedback loop | 状态 | 证据 / 说明 | Reopen condition |
 |---|---|---|---|
@@ -37,8 +39,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T0 — Repository skeleton and feedback loop
 
-- 状态：`ready`
-- Owner：RUN manager，必要时委派一个 worker
+- 状态：`verified`
 - 依赖：kickoff
 - 写入边界：根目录、构建配置、最小 backend/frontend/test 目录；不得触碰 `team/`
 - 结果：一条命令可运行 backend tests、frontend tests 和本地 e2e smoke
@@ -46,8 +47,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T1 — Wire envelope and artifact contract
 
-- 状态：`ready`
-- Owner：backend worker
+- 状态：`verified`
 - 依赖：T0；manager 先冻结 DTO
 - 写入边界：backend wire/artifact packages 和对应 tests
 - 结果：immutable request/response envelope、body bytes/blob、hash、complete 状态
@@ -56,7 +56,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T2 — Transparent transport and local mock upstream
 
-- 状态：`planned`
+- 状态：`verified`
 - Owner：backend worker
 - 依赖：T1
 - 写入边界：transport、endpoint、header policy、mock upstream、tests
@@ -65,7 +65,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T3 — Upstream profile and safe credential injection
 
-- 状态：`planned`
+- 状态：`verified`
 - Owner：backend worker；与 T2 的共享 transport 接口由 manager 冻结
 - 依赖：T0、T1
 - 写入边界：profile、config、credential storage、network safety、API handler、tests
@@ -74,7 +74,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T4 — Exchange state machine and gates
 
-- 状态：`planned`
+- 状态：`verified`
 - Owner：backend worker
 - 依赖：T1、T2、T3
 - 写入边界：exchange registry、policy、request/response gate、commands、events、tests
@@ -84,8 +84,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T5 — Protocol inspectors and mutation
 
-- 状态：`planned`
-- Owner：protocol worker
+- 状态：`verified`
 - 依赖：T1；可与 T3 部分并行
 - 写入边界：inspection、protocol fixture、mutation、validation、tests
 - 结果：Responses、Chat Completions、Anthropic Messages、generic JSON、SSE projection；原始 artifact 不变
@@ -94,8 +93,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T6 — Workbench UI
 
-- 状态：`planned`
-- Owner：frontend worker
+- 状态：`verified`
 - 依赖：manager 冻结 exchange/artifact/event DTO；可以先用 typed mock 开发
 - 写入边界：frontend app、types、API client、components、tests
 - 结果：traffic queue、intercept toggles、exchange detail、Raw / Pretty / Diff / SSE views、request/response actions；大 body 通过 artifact 按需读取，支持懒加载/虚拟化、搜索、JSON path 定位和完整下载
@@ -103,7 +101,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T7 — Manual response and edited response integration
 
-- 状态：`planned`
+- 状态：`verified`
 - Owner：backend + frontend 各一位 worker，manager 协调接口
 - 依赖：T4、T5、T6
 - 写入边界：各自模块，不交叉抢写共享 DTO
@@ -112,7 +110,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ### T8 — Integration, adversarial review, and final acceptance
 
-- 状态：`planned`
+- 状态：`in_progress`
 - Owner：manager + independent reviewer
 - 依赖：T0–T7
 - 写入边界：reviewer 默认只读；修正必须由 manager 分配独占范围
@@ -160,12 +158,18 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 - 如果 RUN manager 创建任何 goal，使用 `token_budget=10000000000`；任何 goal 都遵守该预算
 
 
-## Kickoff gate
+## RUN evidence notes
 
-尚待：
+- Leader 已明确说明 executor user quota 问题解决；manager 于本轮重新派发 exchange/gates、workspace API、protocol mutation、proxy e2e、frontend integration 和只读 adversarial review。
 
-1. manager 审查本文件、charter、协议契约和 live Git 状态；
-2. manager 生成 fresh-session kickoff prompt；
-3. leader 在新 workspace session 明确发送 kickoff。
-
-满足前不得派发产品实现。
+- T0 manager verified `go test -race ./...`, `go vet ./...`, live health probe, app proxy-route unit test, and frontend install/test/build.
+- T1 manager verified wire tests including opaque bytes, 8 MiB body, incomplete capture, hashes, escaped path/query, redaction.
+- T2 generic transport/proxy and `tests/e2e` cover all six JSON/SSE fixtures, `/v1/models`, exact request/response hashes, escaped path/raw query, header policy, upstream HTTP/transport errors and client cancellation under local httptest.
+- T3 profile/config tests cover loopback SSRF, CRLF, credential reference and header policy; manager reran full race suite.
+- T4 race-tested exchange tests cover pass/pass, request hold, response hold, unchanged/edit/manual/release/replace/drop/abort, revision conflict, upstream/downstream error and cancellation. Real HTTP gateway integration remains under T7/T8.
+- T5 protocol-aware inspector/mutation tests cover all checked-in fixtures, unknown nodes, Responses termination, Chat choices/usage, Anthropic block grammar, derived artifacts, protocol validation and immutable originals.
+- T6 manager reran 13 frontend tests and production build successfully. Production default uses real local workspace REST/SSE, lazy artifact reads/downloads, policy changes and revisioned commands; mocks remain injectable for tests.
+- Workspace API race tests cover list/get with redaction, artifact range/search/download, revisioned commands and SSE events, future-only policy changes and slow subscribers.
+- T7/T8 gateway integration now has local HTTP tests for pass/pass, request hold unchanged/manual, response hold unchanged/edited, protocol-invalid edit rejection, cancellation, and a real workspace REST `hold/hold` command flow. Standalone process smoke verified `/v1/responses` plus `/api/exchanges` and four visible wire-stage artifact refs.
+- Gateway pass/pass capture limits now preserve downstream traffic and mark observation artifacts incomplete instead of truncating. Standalone defaults restrict listen/upstream to loopback, cap bodies/artifact storage, and enable TTL cleanup.
+- T8 remains `in_progress` pending independent review reconciliation, an attached real-browser interaction pass, final secret scan, commit and clean Git acceptance.

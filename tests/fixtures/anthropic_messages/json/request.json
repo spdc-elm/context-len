@@ -1,0 +1,103 @@
+{
+  "model": "fixture-anthropic-model",
+  "max_tokens": 128,
+  "system": [
+    {
+      "type": "text",
+      "text": "You are a deterministic fixture assistant.",
+      "cache_control": {
+        "type": "ephemeral"
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Use the lookup tool and show a compact answer."
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "Zml4dHVyZS1pbWFnZQ=="
+          }
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": "fixture private reasoning",
+          "signature": "fixture-signature"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_fixture_1",
+          "name": "lookup_fixture",
+          "input": {
+            "key": "alpha"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_fixture_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"value\":\"fixture\"}"
+            }
+          ],
+          "is_error": false
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "lookup_fixture",
+      "description": "Return a value from the local fixture table.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "tool_choice": {
+    "type": "auto"
+  },
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 64
+  },
+  "metadata": {
+    "user_id": "fixture-user",
+    "fixture_case": "anthropic-json"
+  },
+  "output_config": {
+    "effort": "low"
+  },
+  "service_tier": "standard",
+  "unknown_provider_field": {
+    "preserve": true
+  },
+  "stream": false
+}
