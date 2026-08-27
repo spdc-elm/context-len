@@ -22,7 +22,7 @@ States are `received, request_held, upstream_running, response_held, completed, 
 
 `forward_unchanged`, `forward_edited`, `manual_response`, `release_unchanged`, `release_edited`, `replace_response`, `drop`, `abort`.
 
-Every command includes `{ exchange_id, base_revision }`; mutations additionally include a patch/raw replacement and must return a derived artifact, diff, and validation result. Stale revisions are rejected without changing state.
+Every command includes `{ exchange_id, base_revision }`; mutations additionally include a patch/raw replacement and must return a derived artifact and validation result. Stale revisions are rejected without changing state.
 
 ## Events
 

@@ -283,7 +283,6 @@ function syntheticDerivedArtifact(
     base_artifact_id: source?.artifact_id,
     base_sha256: source?.sha256,
     derived_artifact: derived,
-    diff: { changed: true, entries: [{ path: "/", before: "(opaque mock body)", after: "(derived mock body)", kind: "replace" }] },
     validation: { valid: true, protocol: current.protocol, errors: [], warnings: ["Mock validation only; backend must validate before transport."] },
   };
 }

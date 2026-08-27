@@ -170,7 +170,7 @@ start/end timestamps
 - HTTP/2 frame 边界
 - TLS 或 TCP packet 字节
 
-必要的认证替换、Host、Content-Length、hop-by-hop header 处理属于代理 envelope 变化；必须出现在 header diff 和 fidelity badge 中。
+必要的认证替换、Host、Content-Length、hop-by-hop header 处理属于代理 envelope 变化；必须以可解释的方式出现在观察警告和 fidelity 说明中。
 
 ### Fixture manifest
 
@@ -287,16 +287,14 @@ GenericJSONInspector
 编辑永远是显式动作，并绑定一个 base artifact hash：
 
 ```text
-base artifact + patch operations -> derived artifact + diff + validation
+base artifact + patch operations -> derived artifact + validation
 ```
 
 原始 artifact 只读。非流式 JSON 先支持 JSON Pointer / JSON Patch 和 raw replacement；SSE 先支持保留 event 外壳的 event-level 编辑。高层文本重排必须使用对应协议的 serializer，并明确显示 `reconstructed`，不能伪装成原样释放。
 
-编辑器必须在 release 前展示：
+命令结果必须携带：
 
 - 原始与派生 body hash
-- 字段级 diff
-- headers/status diff
 - protocol validation result
 - 哪些未知字段被保留
 

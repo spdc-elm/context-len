@@ -2,7 +2,6 @@ package exchange
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -595,13 +594,11 @@ func (e *Exchange) deriveLocked(base wire.BodyArtifact, in *MutationInput) (Arti
 		return ArtifactMutation{}, fmt.Errorf("%w: %v", ErrMutationInvalid, err)
 	}
 	artifact := candidate.Artifact
-	diff := StructuredDiff{Changed: candidate.Diff.Changed, Entries: convertDiffEntries(candidate.Diff.Entries)}
 	validation := &ValidationResult{Valid: candidate.Validated, Protocol: e.snap.Protocol, Errors: candidate.Validation.ErrorMessages(), Warnings: candidate.Validation.WarningMessages()}
 	result := &MutationResult{
 		BaseArtifactID:  ref.ArtifactID,
 		BaseSHA256:      ref.SHA256,
 		DerivedArtifact: artifactRefPtr(artifact.Ref()),
-		Diff:            &diff,
 		Validation:      validation,
 	}
 	return ArtifactMutation{Artifact: artifact, Result: result}, nil
@@ -615,41 +612,6 @@ func newDerivedArtifact(base wire.BodyArtifact, body []byte) wire.BodyArtifact {
 		ContentType:     ref.ContentType,
 		ContentEncoding: ref.ContentEncoding,
 	})
-}
-
-func rawDiff(before, after []byte) StructuredDiff {
-	return StructuredDiff{
-		Changed: !bytesEqual(before, after),
-		Entries: []DiffEntry{{Path: "", Before: map[string]any{"size": len(before), "sha256": wire.SHA256Hex(before)}, After: map[string]any{"size": len(after), "sha256": wire.SHA256Hex(after)}, Kind: "replace"}},
-	}
-}
-
-func convertDiffEntries(entries []mutation.Entry) []DiffEntry {
-	out := make([]DiffEntry, 0, len(entries))
-	for _, entry := range entries {
-		out = append(out, DiffEntry{Path: entry.Path, Before: boundedDiffValue(entry.Before), After: boundedDiffValue(entry.After), Kind: entry.Kind})
-	}
-	return out
-}
-
-func boundedDiffValue(value any) any {
-	encoded, err := json.Marshal(value)
-	if err != nil || len(encoded) <= 4096 {
-		return value
-	}
-	return map[string]any{"truncated": true, "size": len(encoded), "sha256": wire.SHA256Hex(encoded)}
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func artifactRefPtr(ref wire.ArtifactRef) *wire.ArtifactRef { return &ref }
@@ -722,7 +684,6 @@ func (e *Exchange) manualArtifactLocked(c Command, replacement bool) (wire.BodyA
 	}
 	now := time.Now().UTC()
 	env.StartedAt, env.EndedAt = now, now
-	diff := rawDiff(source.Bytes(), body)
 	var baseID, baseSHA string
 	if replacement {
 		baseID, baseSHA = ref.ArtifactID, ref.SHA256
@@ -731,8 +692,7 @@ func (e *Exchange) manualArtifactLocked(c Command, replacement bool) (wire.BodyA
 		BaseArtifactID:  baseID,
 		BaseSHA256:      baseSHA,
 		DerivedArtifact: artifactRefPtr(artifact.Ref()),
-		Diff:            &diff,
-		Validation:      &ValidationResult{Valid: true, Protocol: e.snap.Protocol, Errors: protocolValidation.ErrorMessages(), Warnings: protocolValidation.WarningMessages()},
+		Validation:      &ValidationResult{Valid: protocolValidation.Valid, Protocol: e.snap.Protocol, Errors: protocolValidation.ErrorMessages(), Warnings: protocolValidation.WarningMessages()},
 	}
 	return artifact, env.Clone(), result, nil
 }
@@ -1189,11 +1149,6 @@ func cloneMutationResult(m *MutationResult) *MutationResult {
 	if m.DerivedArtifact != nil {
 		r := *m.DerivedArtifact
 		c.DerivedArtifact = &r
-	}
-	if m.Diff != nil {
-		d := *m.Diff
-		d.Entries = append([]DiffEntry(nil), m.Diff.Entries...)
-		c.Diff = &d
 	}
 	if m.Validation != nil {
 		v := *m.Validation

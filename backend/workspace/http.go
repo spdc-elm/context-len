@@ -969,11 +969,6 @@ func redactMutation(in *exchange.MutationResult) *exchange.MutationResult {
 		ref := *in.DerivedArtifact
 		out.DerivedArtifact = &ref
 	}
-	if in.Diff != nil {
-		diff := *in.Diff
-		diff.Entries = append([]exchange.DiffEntry(nil), in.Diff.Entries...)
-		out.Diff = &diff
-	}
 	if in.Validation != nil {
 		validation := *in.Validation
 		validation.Errors = append([]string(nil), in.Validation.Errors...)

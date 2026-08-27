@@ -61,7 +61,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 - 依赖：T1
 - 写入边界：transport、endpoint、header policy、mock upstream、tests
 - 结果：三协议 JSON/SSE 在 pass/pass 下同协议转发；`GET /v1/models` 可透明转发；body 不 decode/encode
-- 证据：六类 fixture 的 inbound/upstream 和 upstream/downstream hash equality；原始 path/escaped path/raw query 比较；header diff 可解释；status/error passthrough；cancellation
+- 证据：六类 fixture 的 inbound/upstream 和 upstream/downstream hash equality；原始 path/escaped path/raw query 比较；header 变化可解释；status/error passthrough；cancellation
 
 ### T3 — Upstream profile and safe credential injection
 
@@ -88,7 +88,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 - 依赖：T1；可与 T3 部分并行
 - 写入边界：inspection、protocol fixture、mutation、validation、tests
 - 结果：Responses、Chat Completions、Anthropic Messages、generic JSON、SSE projection；原始 artifact 不变
-- 证据：unknown nodes retained、tool/reasoning/content block/event coverage、parser failure pass-through、diff tests
+- 证据：unknown nodes retained、tool/reasoning/content block/event coverage、parser failure pass-through、protocol validation tests
 - Fixture policy：只从抓包目录提取脱敏的最小形状；原始日志不进入仓库
 
 ### T6 — Workbench UI
@@ -96,7 +96,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 - 状态：`verified`
 - 依赖：manager 冻结 exchange/artifact/event DTO；可以先用 typed mock 开发
 - 写入边界：frontend app、types、API client、components、tests
-- 结果：traffic queue、intercept toggles、exchange detail、Raw / Pretty / Diff / SSE views、request/response actions；大 body 通过 artifact 按需读取，支持懒加载/虚拟化、搜索、JSON path 定位和完整下载
+- 结果：traffic queue、intercept toggles、exchange detail、Raw / Pretty / SSE views、request/response actions；大 body 通过 artifact 按需读取，支持懒加载/虚拟化、搜索、JSON path 定位和完整下载
 - 证据：component tests、state reducer tests、mock realtime interaction、浏览器 smoke
 
 ### T7 — Manual response and edited response integration
@@ -106,7 +106,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 - 依赖：T4、T5、T6
 - 写入边界：各自模块，不交叉抢写共享 DTO
 - 结果：三协议人工响应；JSON edit、event-level edit、replacement 和 drop 路径；原始 artifact 保留
-- 证据：protocol validation、hash/diff、browser interaction、request hold 期间 upstream 未调用的 assertion
+- 证据：protocol validation、hash、browser interaction、request hold 期间 upstream 未调用的 assertion
 
 ### T8 — Integration, adversarial review, and final acceptance
 
@@ -114,7 +114,7 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 - Owner：manager + independent reviewer
 - 依赖：T0–T7
 - 写入边界：reviewer 默认只读；修正必须由 manager 分配独占范围
-- 结果：完成 charter 的十项完成证据，包括 `/v1/models` 和 raw query/header diff
+- 结果：完成 charter 的十项完成证据，包括 `/v1/models` 和 raw query/header 变化可见
 - 证据：manager 亲跑 full tests、本地 e2e、三协议代表性长轨迹、secret scan、关键代码审计
 
 ## Parallelization plan

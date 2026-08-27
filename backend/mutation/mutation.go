@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"reflect"
-	"sort"
 	"strings"
 )
 
@@ -28,24 +26,11 @@ type Operation struct {
 // operator's observed revision.
 type Result struct {
 	Artifact   wire.BodyArtifact           `json:"artifact"`
-	Diff       Diff                        `json:"diff"`
 	BaseSHA256 string                      `json:"base_sha256"`
 	Validated  bool                        `json:"validated"`
 	Validation inspection.ValidationResult `json:"validation"`
 	Protocol   inspection.Protocol         `json:"protocol,omitempty"`
 	Format     inspection.BodyFormat       `json:"format,omitempty"`
-}
-
-type Diff struct {
-	Changed bool    `json:"changed"`
-	Entries []Entry `json:"entries"`
-}
-
-type Entry struct {
-	Path   string `json:"path"`
-	Before any    `json:"before,omitempty"`
-	After  any    `json:"after,omitempty"`
-	Kind   string `json:"kind"`
 }
 
 // Replace creates a derived raw artifact without interpreting body bytes. It
@@ -55,26 +40,20 @@ func Replace(base wire.BodyArtifact, body []byte) (Result, error) {
 	if len(body) == 0 {
 		return Result{}, fmt.Errorf("mutation: replacement body is empty")
 	}
-	return derive(base, body, Diff{
-		Changed: !bytes.Equal(base.Bytes(), body),
-		Entries: replacementDiff(base.Bytes(), body),
-	}, inspection.ProtocolUnknown, inspection.FormatUnknown, true), nil
+	return derive(base, body, inspection.ProtocolUnknown, inspection.FormatUnknown, true), nil
 }
 
 // ReplaceProtocol creates a derived artifact and validates it against the
 // selected provider protocol. A validation failure is represented in Result
 // (Validated=false) rather than discarding the candidate, so an editor can
-// display its diff and diagnostics before deciding whether to retry. Parsing
+// display its validation result before deciding whether to retry. Parsing
 // and artifact construction errors still return a non-nil error.
 func ReplaceProtocol(base wire.BodyArtifact, body []byte, protocol inspection.Protocol, format ...inspection.BodyFormat) (Result, error) {
 	if len(body) == 0 {
 		return Result{}, fmt.Errorf("mutation: replacement body is empty")
 	}
 	validation := inspection.ValidateProtocol(protocol, body, format...)
-	return derive(base, body, Diff{
-		Changed: !bytes.Equal(base.Bytes(), body),
-		Entries: replacementDiff(base.Bytes(), body),
-	}, protocol, validation.Format, validation.Valid).withValidation(validation), nil
+	return derive(base, body, protocol, validation.Format, validation.Valid).withValidation(validation), nil
 }
 
 // RawReplacement is a readable alias for ReplaceProtocol.
@@ -87,23 +66,23 @@ func RawReplacement(base wire.BodyArtifact, body []byte, protocol inspection.Pro
 // protocol-aware validation. JSON is decoded only because the caller asked for
 // an explicit mutation, never on a bypass path.
 func JSONPatch(base wire.BodyArtifact, ops []Operation) (Result, error) {
-	body, diff, err := applyJSONPatch(base.Bytes(), ops)
+	body, err := applyJSONPatch(base.Bytes(), ops)
 	if err != nil {
 		return Result{}, err
 	}
-	return derive(base, body, diff, inspection.ProtocolUnknown, inspection.FormatJSON, true), nil
+	return derive(base, body, inspection.ProtocolUnknown, inspection.FormatJSON, true), nil
 }
 
-// JSONPatchProtocol applies explicit operations, computes a field-level diff,
-// and validates the derived body using the protocol's JSON contract. Unknown
-// fields remain in the patched tree and are reported by the projection.
+// JSONPatchProtocol applies explicit operations and validates the derived body
+// using the protocol's JSON contract. Unknown fields remain in the patched tree
+// and are reported by the projection.
 func JSONPatchProtocol(base wire.BodyArtifact, ops []Operation, protocol inspection.Protocol, format ...inspection.BodyFormat) (Result, error) {
-	body, diff, err := applyJSONPatch(base.Bytes(), ops)
+	body, err := applyJSONPatch(base.Bytes(), ops)
 	if err != nil {
 		return Result{}, err
 	}
 	validation := inspection.ValidateProtocol(protocol, body, append([]inspection.BodyFormat{inspection.FormatJSON}, format...)...)
-	return derive(base, body, diff, protocol, validation.Format, validation.Valid).withValidation(validation), nil
+	return derive(base, body, protocol, validation.Format, validation.Valid).withValidation(validation), nil
 }
 
 // ApplyJSONPatch is an alias useful to command handlers.
@@ -111,7 +90,7 @@ func ApplyJSONPatch(base wire.BodyArtifact, ops []Operation, protocol inspection
 	return JSONPatchProtocol(base, ops, protocol, format...)
 }
 
-// RequireValid rejects a candidate after its diff and diagnostics have been
+// RequireValid rejects a candidate after validation diagnostics have been
 // produced. It is useful at a release boundary that must not forward an
 // invalid explicit mutation.
 func RequireValid(result Result) (Result, error) {
@@ -130,7 +109,7 @@ func (r Result) withValidation(validation inspection.ValidationResult) Result {
 	return r
 }
 
-func derive(base wire.BodyArtifact, body []byte, diff Diff, protocol inspection.Protocol, format inspection.BodyFormat, validated bool) Result {
+func derive(base wire.BodyArtifact, body []byte, protocol inspection.Protocol, format inspection.BodyFormat, validated bool) Result {
 	a := wire.NewArtifact(body, wire.ArtifactOptions{
 		Stage:           "derived",
 		Direction:       base.Ref().Direction,
@@ -139,7 +118,6 @@ func derive(base wire.BodyArtifact, body []byte, diff Diff, protocol inspection.
 	})
 	return Result{
 		Artifact:   a,
-		Diff:       diff,
 		BaseSHA256: base.Ref().SHA256,
 		Validated:  validated,
 		Protocol:   protocol,
@@ -147,44 +125,31 @@ func derive(base wire.BodyArtifact, body []byte, diff Diff, protocol inspection.
 	}
 }
 
-func replacementDiff(before, after []byte) []Entry {
-	if bytes.Equal(before, after) {
-		return nil
-	}
-	return []Entry{{Path: "", Before: map[string]any{"size": len(before), "sha256": wire.SHA256Hex(before)}, After: map[string]any{"size": len(after), "sha256": wire.SHA256Hex(after)}, Kind: "replace"}}
-}
-
-func applyJSONPatch(source []byte, ops []Operation) ([]byte, Diff, error) {
+func applyJSONPatch(source []byte, ops []Operation) ([]byte, error) {
 	var root any
 	decoder := json.NewDecoder(bytes.NewReader(source))
 	decoder.UseNumber()
 	if err := decoder.Decode(&root); err != nil {
-		return nil, Diff{}, fmt.Errorf("mutation: base JSON: %w", err)
+		return nil, fmt.Errorf("mutation: base JSON: %w", err)
 	}
 	// Reject non-whitespace trailing values. This avoids silently mutating a
 	// prefix while the original body is malformed.
 	var trailing any
 	if err := decoder.Decode(&trailing); err == nil {
-		return nil, Diff{}, fmt.Errorf("mutation: base JSON has trailing value")
+		return nil, fmt.Errorf("mutation: base JSON has trailing value")
 	} else if err != io.EOF {
-		return nil, Diff{}, fmt.Errorf("mutation: base JSON has malformed trailing bytes: %w", err)
+		return nil, fmt.Errorf("mutation: base JSON has malformed trailing bytes: %w", err)
 	}
-	before := deepCloneJSON(root)
 	for _, op := range ops {
 		if err := applyOperation(&root, op); err != nil {
-			return nil, Diff{}, err
+			return nil, err
 		}
 	}
 	out, err := json.Marshal(root)
 	if err != nil {
-		return nil, Diff{}, fmt.Errorf("mutation: encode JSON: %w", err)
+		return nil, fmt.Errorf("mutation: encode JSON: %w", err)
 	}
-	diff := jsonDiff(before, root)
-	if !diff.Changed && !bytes.Equal(source, out) {
-		// Formatting-only explicit patches still produce an auditable root diff.
-		diff = Diff{Changed: true, Entries: replacementDiff(source, out)}
-	}
-	return out, diff, nil
+	return out, nil
 }
 
 func applyOperation(root *any, operation Operation) error {
@@ -392,65 +357,4 @@ func deepCloneJSON(value any) any {
 	default:
 		return typed
 	}
-}
-
-func jsonDiff(before, after any) Diff {
-	entries := make([]Entry, 0)
-	diffJSONValues("", before, after, &entries)
-	return Diff{Changed: len(entries) != 0, Entries: entries}
-}
-
-func diffJSONValues(path string, before, after any, entries *[]Entry) {
-	if reflect.DeepEqual(before, after) {
-		return
-	}
-	bm, bok := before.(map[string]any)
-	am, aok := after.(map[string]any)
-	if bok && aok {
-		keys := make([]string, 0, len(bm)+len(am))
-		seen := make(map[string]struct{}, len(bm)+len(am))
-		for key := range bm {
-			seen[key] = struct{}{}
-			keys = append(keys, key)
-		}
-		for key := range am {
-			if _, exists := seen[key]; !exists {
-				keys = append(keys, key)
-			}
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			childPath := path + "/" + strings.ReplaceAll(strings.ReplaceAll(key, "~", "~0"), "/", "~1")
-			old, hasOld := bm[key]
-			next, hasNext := am[key]
-			switch {
-			case !hasOld:
-				*entries = append(*entries, Entry{Path: childPath, After: next, Kind: "add"})
-			case !hasNext:
-				*entries = append(*entries, Entry{Path: childPath, Before: old, Kind: "remove"})
-			default:
-				diffJSONValues(childPath, old, next, entries)
-			}
-		}
-		return
-	}
-	bs, bok := before.([]any)
-	as, aok := after.([]any)
-	if bok && aok {
-		limit := len(bs)
-		if len(as) < limit {
-			limit = len(as)
-		}
-		for i := 0; i < limit; i++ {
-			diffJSONValues(fmt.Sprintf("%s/%d", path, i), bs[i], as[i], entries)
-		}
-		for i := limit; i < len(bs); i++ {
-			*entries = append(*entries, Entry{Path: fmt.Sprintf("%s/%d", path, i), Before: bs[i], Kind: "remove"})
-		}
-		for i := limit; i < len(as); i++ {
-			*entries = append(*entries, Entry{Path: fmt.Sprintf("%s/%d", path, i), After: as[i], Kind: "add"})
-		}
-		return
-	}
-	*entries = append(*entries, Entry{Path: path, Before: before, After: after, Kind: "replace"})
 }

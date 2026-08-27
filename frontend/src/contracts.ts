@@ -220,27 +220,7 @@ export interface MutationResult {
   base_artifact_id?: string;
   base_sha256?: string;
   derived_artifact?: ArtifactRef;
-  diff?: StructuredDiff;
   validation?: ValidationResult;
-}
-
-export interface StructuredDiff {
-  changed: boolean;
-  entries: DiffEntry[];
-  headers?: HeaderDiff[];
-}
-
-export interface DiffEntry {
-  path: string;
-  before?: unknown;
-  after?: unknown;
-  kind: "add" | "remove" | "replace";
-}
-
-export interface HeaderDiff {
-  name: string;
-  before?: string | string[];
-  after?: string | string[];
 }
 
 export interface ValidationResult {

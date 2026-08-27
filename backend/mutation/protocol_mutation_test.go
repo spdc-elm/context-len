@@ -39,13 +39,6 @@ func TestJSONPatchProtocolPreservesUnknownAndNestedValues(t *testing.T) {
 	if bytes.Equal(result.Artifact.Bytes(), before) || !bytes.Equal(base.Bytes(), before) {
 		t.Fatalf("base artifact changed or candidate did not change")
 	}
-	paths := make(map[string]bool)
-	for _, entry := range result.Diff.Entries {
-		paths[entry.Path] = true
-	}
-	if !paths["/choices/1/message/content"] || !paths["/choices/0/message/provider_extension"] {
-		t.Fatalf("field-level diff = %#v", result.Diff)
-	}
 	projection := inspection.InspectChatCompletionsJSON(result.Artifact.Bytes())
 	if projection.Root == nil {
 		t.Fatalf("unknown/choices lost after mutation: %#v", projection)
@@ -68,9 +61,6 @@ func TestJSONPatchSupportsArraysEscapesAndRemove(t *testing.T) {
 	want := `{"a/b":[1,3,4],"~key":{}}`
 	if string(result.Artifact.Bytes()) != want {
 		t.Fatalf("patched body = %s, want %s", result.Artifact.Bytes(), want)
-	}
-	if len(result.Diff.Entries) != 3 {
-		t.Fatalf("diff entries = %#v", result.Diff.Entries)
 	}
 }
 
@@ -98,7 +88,7 @@ func TestProtocolRawReplacementValidatesSSEWithoutRewritingSource(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Validated || !result.Validation.Valid || !bytes.Equal(result.Artifact.Bytes(), body) || result.Diff.Changed {
+	if !result.Validated || !result.Validation.Valid || !bytes.Equal(result.Artifact.Bytes(), body) {
 		t.Fatalf("unchanged SSE replacement = %#v", result)
 	}
 	if result.Artifact.Ref().Stage != "derived" || result.Artifact.Ref().SHA256 != base.Ref().SHA256 {

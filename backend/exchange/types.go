@@ -186,21 +186,6 @@ type Command struct {
 	Reason           string      `json:"reason,omitempty"`
 }
 
-// StructuredDiff and related values are returned whenever a command creates a
-// derived artifact.  They are deliberately generic; protocol inspectors can
-// attach richer field-level entries in a later projection layer.
-type StructuredDiff struct {
-	Changed bool        `json:"changed"`
-	Entries []DiffEntry `json:"entries"`
-}
-
-type DiffEntry struct {
-	Path   string `json:"path"`
-	Before any    `json:"before,omitempty"`
-	After  any    `json:"after,omitempty"`
-	Kind   string `json:"kind"`
-}
-
 type ValidationResult struct {
 	Valid    bool     `json:"valid"`
 	Protocol string   `json:"protocol,omitempty"`
@@ -212,7 +197,6 @@ type MutationResult struct {
 	BaseArtifactID  string            `json:"base_artifact_id,omitempty"`
 	BaseSHA256      string            `json:"base_sha256,omitempty"`
 	DerivedArtifact *wire.ArtifactRef `json:"derived_artifact,omitempty"`
-	Diff            *StructuredDiff   `json:"diff,omitempty"`
 	Validation      *ValidationResult `json:"validation,omitempty"`
 }
 
@@ -274,12 +258,6 @@ type CreateParams struct {
 // must treat Event and its nested values as read-only; the registry gives each
 // callback an independent value copy.
 type EventSink func(Event)
-
-// ArtifactEditHook is an optional seam for protocol-aware editors. The
-// default registry implementation performs raw replacement/JSON-patch edits
-// itself. A hook may validate and construct a derived artifact explicitly;
-// returning a zero artifact delegates to the built-in mutation path.
-type ArtifactEditHook func(context.Context, wire.BodyArtifact, MutationInput) (wire.BodyArtifact, StructuredDiff, ValidationResult, error)
 
 // Errors are stable sentinels suitable for errors.Is checks by HTTP/WS layers.
 var (

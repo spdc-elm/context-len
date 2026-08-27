@@ -4,7 +4,6 @@ import type {
   ExchangeSnapshot,
   InspectionProjection,
   MutationInput,
-  MutationResult,
   Protocol,
 } from "../contracts";
 import type { DetailTab, LoadedArtifact } from "../workspaceState";
@@ -41,13 +40,11 @@ interface ExchangeDetailProps {
   onDownloadBody: (artifact: ArtifactRef) => void;
   onCommand: (intent: CommandIntent) => void;
   commandBusy: boolean;
-  mutation?: MutationResult;
 }
 
 const tabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "raw", label: "Raw", description: "Opaque artifact bytes" },
   { id: "pretty", label: "Pretty", description: "Projection only" },
-  { id: "diff", label: "Diff", description: "Mutation preview" },
   { id: "sse", label: "SSE", description: "Event projection" },
 ];
 
@@ -248,19 +245,6 @@ function ProjectionBody({ exchange, tab, body, artifact }: { exchange: ExchangeS
   );
 }
 
-function DiffBody({ exchange, mutation }: { exchange: ExchangeSnapshot; mutation?: MutationResult }) {
-  const derived = mutation?.derived_artifact;
-  const entries = mutation?.diff?.entries ?? [];
-  return (
-    <div className="diff-view">
-      <div className="diff-header"><span>Base artifact</span><code>{mutation?.base_sha256 ?? exchange.response.artifact_refs[0]?.sha256 ?? exchange.request.artifact_refs[0]?.sha256 ?? "—"}</code></div>
-      <div className="diff-header"><span>Derived artifact</span><code>{derived ? `${derived.artifact_id} · ${derived.sha256}` : "none · create via an explicit edit"}</code></div>
-      {mutation?.validation && <div className={mutation.validation.valid ? "validation-box valid" : "validation-box invalid"}><strong>{mutation.validation.valid ? "Validation passed" : "Validation failed"}</strong>{mutation.validation.errors.map((error, index) => <p key={`error-${index}`}>{error}</p>)}{mutation.validation.warnings.map((warning, index) => <p key={`warning-${index}`}>{warning}</p>)}</div>}
-      {entries.length > 0 ? <div className="diff-entries">{entries.map((entry, index) => <div className={`diff-entry diff-${entry.kind}`} key={`${entry.path}-${index}`}><code>{entry.path}</code><pre>{JSON.stringify(entry.before, null, 2)}</pre><span>→</span><pre>{JSON.stringify(entry.after, null, 2)}</pre></div>)}</div> : <div className="body-placeholder">No mutation has been staged. Original artifacts are immutable; an explicit edit creates a derived artifact and structured diff.</div>}
-    </div>
-  );
-}
-
 function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies, bodyLoading, onLoadBody, onDownloadBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "loadedBodies" | "bodyLoading" | "onLoadBody" | "onDownloadBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
   if (!exchange) return null;
   const refs = allArtifacts(exchange);
@@ -330,7 +314,6 @@ export function ExchangeDetail({
   onDownloadBody,
   onCommand,
   commandBusy,
-  mutation,
 }: ExchangeDetailProps) {
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>();
   const [editorMode, setEditorMode] = useState<CommandIntent["kind"]>();
@@ -415,7 +398,6 @@ export function ExchangeDetail({
         <div className="viewer-body">
           {activeTab === "raw" && <RawBody body={body} search={search} />}
           {activeTab === "pretty" && (body !== undefined ? <pre className="code-view" aria-label="Pretty artifact body">{prettyAtPath(body, jsonPath)}</pre> : <div className="body-placeholder">Load an artifact to render a projection. Pretty output is display-only.</div>)}
-          {activeTab === "diff" && <DiffBody exchange={exchange} mutation={mutation} />}
           {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} />}
         </div>
       </section>

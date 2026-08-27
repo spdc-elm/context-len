@@ -190,7 +190,6 @@ export function App({ api }: AppProps) {
           onDownloadBody={(artifact) => void downloadBody(artifact)}
           onCommand={(intent) => void runCommand(intent)}
           commandBusy={commandBusy}
-          mutation={exchange ? state.mutationResults[exchange.exchange_id] : undefined}
         />
       </div>
       <footer className="footer-note"><span>Projection-only UI · local workspace API</span><span>{loadedCount} artifact{loadedCount === 1 ? "" : "s"} loaded locally</span></footer>

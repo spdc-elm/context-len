@@ -123,18 +123,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .event-list li { padding: 0 0 13px 7px; }
 .event-list code { color: #a7f3d0; }
 .event-list pre { overflow: auto; margin: 5px 0 0; color: #c9d4e3; white-space: pre-wrap; }
-.diff-view { padding: 20px; }
-.diff-header { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
-.diff-header code { overflow: hidden; color: var(--subtle); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.diff-view .body-placeholder { min-height: 190px; }
-.validation-box { margin: 14px 0; padding: 9px 11px; border-left: 2px solid var(--accent-strong); color: var(--subtle); background: #13241f; font-size: 11px; }
-.validation-box.invalid { border-left-color: var(--danger); color: #fecdd3; background: #2b1720; }
-.validation-box p { margin: 4px 0 0; }
-.diff-entries { margin-top: 14px; }
-.diff-entry { display: grid; grid-template-columns: minmax(90px, 130px) minmax(0, 1fr) 20px minmax(0, 1fr); align-items: start; gap: 9px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 10px; }
-.diff-entry > code { color: var(--accent); overflow-wrap: anywhere; }
-.diff-entry > pre { overflow: auto; max-height: 180px; margin: 0; padding: 6px; color: var(--subtle); background: #0f141d; white-space: pre-wrap; word-break: break-word; }
-.diff-entry > span { color: var(--warning); text-align: center; }
 .mutation-editor { margin-top: 17px; padding: 15px 17px; border: 1px solid #665524; border-radius: 8px; background: #191812; }
 .editor-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
 .editor-heading h3 { margin: 5px 0 0; color: #f2f4f8; font-size: 14px; }
@@ -162,9 +150,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .viewer-toolbar { flex-direction: column; }
   .artifact-picker { min-height: 48px; padding: 0 12px; border-top: 1px solid var(--line); flex-wrap: wrap; }
   .editor-actions { align-items: flex-start; flex-direction: column; }
-  .diff-entry { grid-template-columns: 95px minmax(0, 1fr); }
-  .diff-entry > span { display: none; }
-  .diff-entry > pre { grid-column: 2; }
 }
 @media (max-width: 620px) {
   .workspace-grid { display: block; }

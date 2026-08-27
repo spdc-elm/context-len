@@ -48,7 +48,6 @@ describe("mock workspace API contract", () => {
     });
     expect(result.mutation?.derived_artifact?.artifact_id).toContain("mock-derived");
     expect(result.mutation?.base_sha256).toBe(original.sha256);
-    expect(result.mutation?.diff?.changed).toBe(true);
     const updated = await api.getExchange(exchange.exchange_id);
     expect(updated.response.artifact_refs).toHaveLength(2);
   });

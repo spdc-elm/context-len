@@ -4,11 +4,10 @@ import {
   type ExchangeSnapshot,
   type GateMode,
   type InspectionProjection,
-  type MutationResult,
   type WorkspacePolicy,
 } from "./contracts";
 
-export type DetailTab = "raw" | "pretty" | "diff" | "sse";
+export type DetailTab = "raw" | "pretty" | "sse";
 
 export interface LoadedArtifact {
   artifactId: string;
@@ -29,7 +28,6 @@ export interface WorkspaceState {
   error?: string;
   bodyLoading: boolean;
   loadedBodies: Record<string, LoadedArtifact>;
-  mutationResults: Record<string, MutationResult | undefined>;
   search: string;
   jsonPath: string;
 }
@@ -59,7 +57,6 @@ export const initialWorkspaceState: WorkspaceState = {
   loading: true,
   bodyLoading: false,
   loadedBodies: {},
-  mutationResults: {},
   search: "",
   jsonPath: "",
 };
@@ -200,9 +197,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       const result = action.result;
       const nextSnapshot = { ...result.exchange, revision: result.revision };
       const next = upsertExchange(state, nextSnapshot, result.revision);
-      return result.mutation
-        ? { ...next, mutationResults: { ...next.mutationResults, [nextSnapshot.exchange_id]: result.mutation } }
-        : next;
+      return next;
     }
     case "body_load_started":
       return { ...state, bodyLoading: true, error: undefined };

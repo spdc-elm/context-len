@@ -56,7 +56,7 @@
 
 ### 3. Model transparency
 
-请求中的 `model` 原样传给上游。上游 profile 不保存默认 model，不提供隐式模型目录，不按模型前缀猜测 provider。任何 model rewrite 都必须是用户明确创建的实验操作，并产生可见 diff。
+请求中的 `model` 原样传给上游。上游 profile 不保存默认 model，不提供隐式模型目录，不按模型前缀猜测 provider。任何 model rewrite 都必须是用户明确创建的实验操作，并通过 derived artifact 可见。
 
 ### 4. Projection cannot affect traffic
 
@@ -64,7 +64,7 @@
 
 ### 5. Explicit mutation only
 
-没有明确的 forward/edit/reply/release 操作，就不改变 body。所有编辑产生新的 derived artifact，原始 artifact 永不覆盖；释放前显示 base hash、result hash 和结构化 diff。
+没有明确的 forward/edit/reply/release 操作，就不改变 body。所有编辑产生新的 derived artifact，原始 artifact 永不覆盖；命令结果携带 base hash、derived artifact hash 和协议校验结果。
 
 ### 6. Streaming fidelity
 
@@ -98,7 +98,7 @@ bypass 路径不聚合、不重新编码 SSE；按收到的 bytes 转发。Respo
 - `mutation`：JSON pointer、event-level 和 raw replacement 的派生 artifact
 - `profile`：上游 URL、路径映射、认证方式和安全校验
 - `persistence`：exchange 元数据和外置 wire artifact
-- `workspace`：队列、详情、命令、diff 和实时事件
+- `workspace`：队列、详情、命令和实时事件
 
 参考实现中的 `turn`、`pending`、`protocolruntime`、`egress` 可以作为人工响应思路的参考，但不能成为透明 bypass 的必经链路。
 
@@ -128,11 +128,11 @@ manager 只有在以下证据齐全后才可宣布完成：
 3. bypass 下 upstream response body 与 downstream body 逐字节相同；状态码、Content-Type、Content-Encoding、可转发响应 headers 和 SSE event bytes 均有断言。
 4. 未知字段、并行工具调用、reasoning / thinking、Responses output items 和 SSE event 均能在 projection 中观察，且 projection 失败不阻断 bypass。
 5. request gate 的原样放行、编辑后放行、人工原协议回复和丢弃均可用；request hold 期间 upstream 没有收到请求，downstream 没有提前提交 status/header。
-6. response gate 的原样释放保持 hash；编辑、替换和丢弃均有代表性测试，至少一种显式编辑路径产生可审计 diff 并通过协议校验。
+6. response gate 的原样释放保持 hash；编辑、替换和丢弃均有代表性测试，编辑路径通过协议校验并保留 derived artifact。
 7. 客户端取消能够取消上游；上游错误不会无声地让客户端永久等待。
 8. credentials、访问隔离、SSRF 防护、body size 和 artifact 清理有测试证据。
-9. 前端能从实时事件定位 exchange，并在 Raw / Pretty / Diff / SSE 视图之间切换；大 body 通过 artifact 按需读取，支持懒加载/虚拟化、搜索、JSON path 定位和完整下载，展示截断不改变 artifact。
-10. manager 亲自检查关键 diff、运行测试和一条端到端本地交互；executor 自报不算完成证据。
+9. 前端能从实时事件定位 exchange，并在 Raw / Pretty / SSE 视图之间切换；大 body 通过 artifact 按需读取，支持懒加载/虚拟化、搜索、JSON path 定位和完整下载，展示截断不改变 artifact。
+10. manager 亲自检查关键代码、运行测试和一条端到端本地交互；executor 自报不算完成证据。
 
 ## 团队运行契约
 
