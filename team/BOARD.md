@@ -162,10 +162,11 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 - Leader 已明确说明 executor user quota 问题解决；manager 于本轮重新派发 exchange/gates、workspace API、protocol mutation、proxy e2e、frontend integration 和只读 adversarial review。
 
-- T0 manager verified `go test -race ./...`, `go vet ./...`, live health probe, app proxy-route unit test, and frontend install/test/build.
+- T0 manager verified `go test -race ./...`, `go vet ./...`, live health probe, app proxy-route unit test, frontend install/test/build, and `scripts/start-local.sh` one-click smoke (backend health, Vite index, fixture response identity, workspace four refs).
+- T0 now includes `config.example.json` + ignored `config.local.json`: strict two-field (`base_url`, `api_key`) JSON loading, file permission check, server-only Bearer injection, and no-secret summary tests.
 - T1 manager verified wire tests including opaque bytes, 8 MiB body, incomplete capture, hashes, escaped path/query, redaction.
 - T2 generic transport/proxy and `tests/e2e` cover all six JSON/SSE fixtures, `/v1/models`, exact request/response hashes, escaped path/raw query, header policy, upstream HTTP/transport errors and client cancellation under local httptest.
-- T3 profile/config tests cover loopback SSRF, CRLF, credential reference and header policy; manager reran full race suite.
+- T3 profile/config tests cover loopback SSRF, CRLF, credential reference and header policy; runtime config now exposes only local `base_url`/`api_key`, injects API key server-side as Bearer, and requires explicit `CONTEXT_LENS_ALLOW_NON_LOOPBACK=1` for external origins. Manager reran full race suite.
 - T4 race-tested exchange tests cover pass/pass, request hold, response hold, unchanged/edit/manual/release/replace/drop/abort, revision conflict, upstream/downstream error and cancellation. Real HTTP gateway integration remains under T7/T8.
 - T5 protocol-aware inspector/mutation tests cover all checked-in fixtures, unknown nodes, Responses termination, Chat choices/usage, Anthropic block grammar, derived artifacts, protocol validation and immutable originals.
 - T6 manager reran 13 frontend tests and production build successfully. Production default uses real local workspace REST/SSE, lazy artifact reads/downloads, policy changes and revisioned commands; mocks remain injectable for tests.
