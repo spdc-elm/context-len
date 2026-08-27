@@ -7,7 +7,7 @@
 - 项目：`context-lens`
 - 绝对工作区：`/Users/littlefairy/projects/context-lens`
 - Git：独立本地仓库，branch `main`
-- PREPARE 基线：`f36770a837fc978a93015f56beaeb8cf996318bd`；空仓库初始化后由 manager 写入本 charter、board 和协议契约文档
+- PREPARE 基线：`6c4c4c614a7880246f33659f6158d2e5733591e2`；空仓库初始化后由 manager 写入本 charter、board 和协议契约文档
 - 参考实现（只读）：`/Users/littlefairy/projects/Harness_model_coupling/ChatAPI`
 - 参考实现基线：`f65a7afeedf6984f26cff637c17b8affed17d57a`
 - 真实抓包材料（只读）：`/Users/littlefairy/projects/new-api/logs/relay-debug`

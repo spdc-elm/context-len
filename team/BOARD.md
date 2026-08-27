@@ -8,7 +8,8 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 - `/Users/littlefairy/projects/context-lens`
 - branch：`main`
-- 当前 revision：`f36770a837fc978a93015f56beaeb8cf996318bd` (`docs: establish context-lens team charter and protocol contract`)
+- canonical baseline revision：`f36770a837fc978a93015f56beaeb8cf996318bd` (`docs: establish context-lens team charter and protocol contract`)
+- kickoff 时必须重新检查 live `HEAD` 和 dirty state
 - PREPARE 前 dirty state：空目录
 - 当前 PREPARE 写入：`README.md`、`team/CHARTER.md`、`team/BOARD.md`、`docs/protocol-contract.md`
 
