@@ -332,19 +332,18 @@ export function ExchangeDetail({
   commandBusy,
   mutation,
 }: ExchangeDetailProps) {
-  const [selectedArtifacts, setSelectedArtifacts] = useState<Record<string, string>>({});
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string>();
   const [editorMode, setEditorMode] = useState<CommandIntent["kind"]>();
   const [editorText, setEditorText] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
 
   useEffect(() => {
-    setSelectedArtifacts({});
+    setSelectedArtifactId(undefined);
     setEditorMode(undefined);
     setEditorText("");
     setEditorDirty(false);
   }, [exchange?.exchange_id]);
 
-  const selectedArtifactId = selectedArtifacts[activeTab];
   const artifact = artifactForTab(exchange, activeTab, selectedArtifactId);
   const body = bodyFor(artifact, loadedBodies);
   const editorArtifact = exchange && editorMode ? actionArtifactFor(exchange, editorMode) : undefined;
@@ -410,7 +409,7 @@ export function ExchangeDetail({
           <div className="tabs" role="tablist" aria-label="Artifact views">
             {tabs.map((tab) => <button type="button" role="tab" aria-selected={activeTab === tab.id} className={`tab ${activeTab === tab.id ? "active" : ""}`} key={tab.id} onClick={() => onTabChange(tab.id)}>{tab.label}<small>{tab.description}</small></button>)}
           </div>
-          <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onLoadBody={onLoadBody} onDownloadBody={onDownloadBody} onArtifactSelect={(artifactId) => setSelectedArtifacts((current) => ({ ...current, [activeTab]: artifactId }))} />
+          <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onLoadBody={onLoadBody} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
         </div>
         {(activeTab === "raw" || activeTab === "pretty") && <div className="search-toolbar"><label>Search <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label><label>JSON path <input value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} placeholder="$.messages[0]" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
         <div className="viewer-body">

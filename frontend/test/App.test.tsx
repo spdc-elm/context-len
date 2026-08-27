@@ -37,6 +37,26 @@ describe("workbench shell", () => {
     expect(rendered.querySelector('[role="tab"]')).not.toBeNull();
   });
 
+  it("keeps the selected artifact when switching views", async () => {
+    const rendered = await renderApp();
+    const picker = rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement;
+    expect(picker.options.length).toBeGreaterThan(1);
+    const responseOption = [...picker.options].find((option) => option.value.includes("response"));
+    expect(responseOption).toBeDefined();
+    await act(async () => {
+      picker.value = responseOption!.value;
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect((rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement).value).toBe(responseOption!.value);
+    const pretty = [...rendered.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Pretty"));
+    await act(async () => {
+      pretty?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect((rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement).value).toBe(responseOption!.value);
+  });
+
   it("loads an artifact only after the operator asks, keeping Raw view explicit", async () => {
     const rendered = await renderApp();
     const loadButton = [...rendered.querySelectorAll("button")].find((button) => button.textContent?.includes("Load body"));
