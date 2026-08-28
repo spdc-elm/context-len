@@ -284,17 +284,17 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .chat-template-stream { border-top: 1px solid var(--line); }
 .ctx-tag { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; }
 .ctx-tag.ctx-block { margin: 0; padding: 10px 10px 12px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--line-bright); background: transparent; }
-.ctx-tag-line { display: flex; align-items: center; gap: 6px; min-height: 20px; }
+.ctx-tag-line { display: flex; align-items: center; gap: 6px; min-height: 19px; }
 .ctx-marker { color: var(--accent); font-weight: 600; font-size: 11px; }
-.ctx-inner-tag { color: var(--warning); font-weight: 600; font-size: 11px; }
-.ctx-template-scope > .ctx-tag-line > .ctx-inner-tag { color: var(--warning); font-weight: 600; font-size: 11px; }
-.ctx-content-scope > .ctx-tag-line > .ctx-inner-tag { color: #8ea3bd; font-weight: 500; font-size: 11px; }
-.ctx-tag[data-ctx-tag="think"] > .ctx-tag-line > .ctx-inner-tag { color: #a78bca; }
+.ctx-template-scope > .ctx-tag-line > .ctx-inner-tag { color: #e0a54e; font-weight: 600; font-size: 11px; }
+.ctx-content-scope > .ctx-tag-line > .ctx-inner-tag { color: #8fa6c4; font-weight: 500; font-size: 11px; }
+.ctx-tag[data-ctx-tag="think"] > .ctx-tag-line > .ctx-inner-tag { color: #b79ce0; }
 .ctx-ellipsis { color: var(--muted); font-size: 11px; }
 .ctx-chevron-spacer { display: inline-block; width: 14px; flex: 0 0 14px; }
 .ctx-tag-body { margin-left: 7px; padding-left: 11px; border-left: 1px solid var(--line); }
 .ctx-block > .ctx-tag-body { margin-left: 0; padding-left: 21px; border-left: 0; }
-.ctx-text { margin: 2px 0; padding: 3px 0; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.ctx-text { margin: 1px 0; padding: 1px 0; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.ctx-inline-text { display: inline; margin: 0; padding: 0 2px; }
 .ctx-json { margin: 2px 0; }
 .ctx-json-head, .ctx-json-inline { display: inline-flex; align-items: center; gap: 6px; }
 .ctx-json-brace { color: var(--muted); font-size: 11px; }
@@ -307,18 +307,30 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .ctx-json-boolean { color: #b8a3e3; }
 .ctx-json-null { color: var(--muted); font-style: italic; }
 .ctx-json-close { min-height: 19px; display: flex; align-items: center; }
-.chat-template-system, .chat-template-developer { border-left-color: #7890a8; background: color-mix(in srgb, #7890a8 6%, transparent); }
-.chat-template-user { border-left-color: #6aa6df; background: color-mix(in srgb, #6aa6df 6%, transparent); }
-.chat-template-assistant { border-left-color: #67b98f; background: color-mix(in srgb, #67b98f 6%, transparent); }
-.chat-template-reasoning, .chat-template-thinking { border-left-color: #a78bca; background: color-mix(in srgb, #a78bca 6%, transparent); }
-.chat-template-tool_call { border-left-color: #d39b4b; background: color-mix(in srgb, #d39b4b 7%, transparent); }
-.chat-template-tool_definition { border-left-color: #d39b4b; background: color-mix(in srgb, #d39b4b 5%, transparent); }
-.chat-template-tool_result { border-left-color: #c27d65; background: color-mix(in srgb, #c27d65 7%, transparent); }
-.chat-template-unknown { border-left-style: dashed; }
+.ctx-tag.ctx-block.chat-template-system, .ctx-tag.ctx-block.chat-template-developer { border-left-color: #7890a8; background: color-mix(in srgb, #7890a8 9%, transparent); }
+.ctx-tag.ctx-block.chat-template-user { border-left-color: #5aa2e8; background: color-mix(in srgb, #5aa2e8 9%, transparent); }
+.ctx-tag.ctx-block.chat-template-assistant { border-left-color: #58b98d; background: color-mix(in srgb, #58b98d 9%, transparent); }
+.ctx-tag.ctx-block.chat-template-reasoning, .ctx-tag.ctx-block.chat-template-thinking { border-left-color: #a78bca; background: color-mix(in srgb, #a78bca 9%, transparent); }
+.ctx-tag.ctx-block.chat-template-tool_call, .ctx-tag.ctx-block.chat-template-tool_definition { border-left-color: #d39b4b; background: color-mix(in srgb, #d39b4b 9%, transparent); }
+.ctx-tag.ctx-block.chat-template-tool_result { border-left-color: #c27d65; background: color-mix(in srgb, #c27d65 9%, transparent); }
+.ctx-tag.ctx-block.chat-template-unknown { border-left-style: dashed; }
+.ctx-block.chat-template-system > .ctx-tag-line > .ctx-marker, .ctx-block.chat-template-developer > .ctx-tag-line > .ctx-marker { color: #a3b8cf; }
+.ctx-block.chat-template-user > .ctx-tag-line > .ctx-marker { color: #5aa2e8; }
+.ctx-block.chat-template-assistant > .ctx-tag-line > .ctx-marker { color: #58b98d; }
+.ctx-block.chat-template-reasoning > .ctx-tag-line > .ctx-marker, .ctx-block.chat-template-thinking > .ctx-tag-line > .ctx-marker { color: #b79ce0; }
+.ctx-block.chat-template-tool_call > .ctx-tag-line > .ctx-marker, .ctx-block.chat-template-tool_definition > .ctx-tag-line > .ctx-marker { color: #e0a54e; }
+.ctx-block.chat-template-tool_result > .ctx-tag-line > .ctx-marker { color: #d18a70; }
+.ctx-block.chat-template-unknown > .ctx-tag-line > .ctx-marker { color: var(--muted); }
 .theme-light .ctx-marker { color: #176b52; }
-.theme-light .ctx-template-scope > .ctx-tag-line > .ctx-inner-tag { color: #a66a00; }
-.theme-light .ctx-content-scope > .ctx-tag-line > .ctx-inner-tag { color: #5b6b82; }
+.theme-light .ctx-template-scope > .ctx-tag-line > .ctx-inner-tag { color: #a16207; }
+.theme-light .ctx-content-scope > .ctx-tag-line > .ctx-inner-tag { color: #64748b; }
 .theme-light .ctx-tag[data-ctx-tag="think"] > .ctx-tag-line > .ctx-inner-tag { color: #7c5cd6; }
+.theme-light .ctx-block.chat-template-user > .ctx-tag-line > .ctx-marker { color: #1d6fd6; }
+.theme-light .ctx-block.chat-template-assistant > .ctx-tag-line > .ctx-marker { color: #157a4c; }
+.theme-light .ctx-block.chat-template-reasoning > .ctx-tag-line > .ctx-marker, .theme-light .ctx-block.chat-template-thinking > .ctx-tag-line > .ctx-marker { color: #7c5cd6; }
+.theme-light .ctx-block.chat-template-tool_call > .ctx-tag-line > .ctx-marker, .theme-light .ctx-block.chat-template-tool_definition > .ctx-tag-line > .ctx-marker { color: #a66a00; }
+.theme-light .ctx-block.chat-template-tool_result > .ctx-tag-line > .ctx-marker { color: #b4532e; }
+.theme-light .ctx-block.chat-template-system > .ctx-tag-line > .ctx-marker, .theme-light .ctx-block.chat-template-developer > .ctx-tag-line > .ctx-marker { color: #5c718a; }
 .theme-light .ctx-json-string { color: #2f7d4f; }
 .theme-light .ctx-json-number { color: #9a6700; }
 .theme-light .ctx-json-boolean { color: #7c5cd6; }

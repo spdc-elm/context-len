@@ -71,9 +71,21 @@ function parseMaybeJson(text: string | undefined): unknown {
   }
 }
 
+/** Strings that are themselves JSON objects/arrays render as nested JSON
+ * instead of an escaped one-liner; other strings display their raw content. */
+function parseJsonContainer(text: string): unknown {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return parsed !== null && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const SCOPE_TAG_RE = /<([A-Za-z_][A-Za-z0-9_.:-]*)>/;
 const MAX_PARSE_DEPTH = 8;
 const MAX_SCOPES_PER_TEXT = 200;
+const INLINE_TEXT_LIMIT = 80;
 
 /** Find the index of the close tag matching the scope opened at `from`,
  * counting nested same-name opens, or -1 when unbalanced. */
@@ -121,7 +133,12 @@ export function parseContentScopes(id: string, text: string, depth = 0): Segment
     const start = match.index;
     const name = match[1];
     const contentStart = start + match[0].length;
-    if (start > 0) segments.push({ kind: "text", id: `${id}/t${segments.length}`, text: rest.slice(0, start) });
+    if (start > 0) {
+      // The tag renders on its own line; drop the newlines that only
+      // separated it from the preceding text so no blank lines appear.
+      const before = rest.slice(0, start).replace(/\n+$/, "");
+      if (before) segments.push({ kind: "text", id: `${id}/t${segments.length}`, text: before });
+    }
     const closeIndex = findScopeClose(rest, name, contentStart);
     if (closeIndex === -1) {
       // Unbalanced open: keep the literal tag in the text stream.
@@ -129,14 +146,14 @@ export function parseContentScopes(id: string, text: string, depth = 0): Segment
       rest = rest.slice(contentStart);
       continue;
     }
-    const content = rest.slice(contentStart, closeIndex);
+    const content = rest.slice(contentStart, closeIndex).replace(/^\n+/, "").replace(/\n+$/, "");
     segments.push({
       kind: "tag",
       id: `${id}/${name}/${start}`,
       name,
       children: parseContentScopes(`${id}/${name}/${start}`, content, depth + 1),
     });
-    rest = rest.slice(closeIndex + name.length + 3);
+    rest = rest.slice(closeIndex + name.length + 3).replace(/^\n+/, "");
   }
   if (rest.length > 0) segments.push({ kind: "text", id: `${id}/tail`, text: rest });
   return segments;
@@ -241,10 +258,14 @@ function JsonNode({
 }: { id: string; value: unknown; depth: number } & CollapseProps) {
   const isContainer = value !== null && typeof value === "object";
   if (!isContainer) {
-    const text = typeof value === "string" ? JSON.stringify(value) : String(value);
-    return (
-      <span className={`ctx-json-leaf ctx-json-${value === null ? "null" : typeof value}`}>{text}</span>
-    );
+    if (typeof value === "string") {
+      const nested = parseJsonContainer(value);
+      if (nested !== undefined) {
+        return <JsonNode id={`${id}~`} value={nested} depth={0} collapsed={collapsed} onToggle={onToggle} />;
+      }
+      return <span className="ctx-json-leaf ctx-json-string">"{value}"</span>;
+    }
+    return <span className={`ctx-json-leaf ctx-json-${value === null ? "null" : typeof value}`}>{String(value)}</span>;
   }
   const isArray = Array.isArray(value);
   const entries: Array<[string, unknown]> = isArray
@@ -313,6 +334,14 @@ function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment;
   const footer = tagFooter(segment.name, segment.marker);
   const headerClass = segment.marker ? "ctx-marker" : "ctx-inner-tag";
   const scopeClass = segment.marker ? "" : segment.fromTemplate ? " ctx-template-scope" : " ctx-content-scope";
+  const only = segment.children.length === 1 ? segment.children[0] : undefined;
+  const inlineText =
+    only !== undefined && only.kind === "text" && !only.text.includes("\n") && only.text.length <= INLINE_TEXT_LIMIT
+      ? only.text
+      : undefined;
+  // Tags that were inline in the source (single short text child) stay on one
+  // line instead of being blown up into header/body/footer lines.
+  const inlineLeaf = !segment.marker && (segment.children.length === 0 || inlineText !== undefined);
   return (
     <div
       className={`ctx-tag${segment.marker ? " ctx-block" : ""}${scopeClass}${segment.blockKind ? ` chat-template-${segment.blockKind}` : ""}`}
@@ -329,8 +358,14 @@ function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment;
             <code className={headerClass}>{footer}</code>
           </>
         )}
+        {open && inlineLeaf && (
+          <>
+            {inlineText !== undefined && <span className="ctx-text ctx-inline-text">{inlineText}</span>}
+            <code className={headerClass}>{footer}</code>
+          </>
+        )}
       </div>
-      {open && (
+      {open && !inlineLeaf && (
         <>
           <div className="ctx-tag-body">
             <SegmentList segments={segment.children} depth={depth} collapsed={collapsed} onToggle={onToggle} />

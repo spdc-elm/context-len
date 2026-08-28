@@ -141,6 +141,42 @@ describe("ChatTemplateView", () => {
     expect(rendered.textContent).toContain("<orphan>");
   });
 
+  it("compacts newlines around scopes and keeps inline tags on one line", () => {
+    const request = JSON.stringify({
+      messages: [{ role: "user", content: "Line1\n<foo>bar</foo>\nLine2\n<baz>\nmulti\nline\n</baz>\ntail" }],
+    });
+    const rendered = renderView({ protocol: "chat_completions", body: request });
+    const foo = rendered.querySelector('[data-ctx-tag="foo"]');
+    expect(foo?.querySelector(".ctx-inline-text")?.textContent).toBe("bar");
+    const texts = [...rendered.querySelectorAll(".ctx-text")].map((e) => e.textContent);
+    expect(texts).toContain("Line1");
+    expect(texts).toContain("Line2");
+    expect(texts).toContain("tail");
+    expect(texts.every((t) => t.trim() !== "")).toBe(true);
+  });
+
+  it("renders JSON embedded in string values without escape noise", () => {
+    const request = JSON.stringify({
+      messages: [
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: [{ type: "text", text: "{\"ok\":true}" }] }] },
+      ],
+    });
+    const rendered = renderView({ protocol: "anthropic_messages", body: request });
+    const result = rendered.querySelector('[data-ctx-tag="tool_response"].ctx-template-scope');
+    expect(result?.textContent).toContain("ok:");
+    expect(result?.textContent).toContain("true");
+    expect(result?.textContent.includes(String.fromCharCode(92, 34))).toBe(false);
+  });
+
+  it("colors ChatML blocks by role", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    expect(rendered.querySelector(".ctx-block.chat-template-tool_definition")).not.toBeNull();
+    expect(rendered.querySelector(".ctx-block.chat-template-user")).not.toBeNull();
+    expect(rendered.querySelector(".ctx-block.chat-template-assistant")).not.toBeNull();
+    const plain = renderView({ protocol: "chat_completions", body: JSON.stringify({ messages: [{ role: "system", content: "s" }] }) });
+    expect(plain.querySelector(".ctx-block.chat-template-system")).not.toBeNull();
+  });
+
   it("shows the SSE phase placeholder for event-stream artifacts", () => {
     const rendered = renderView({
       protocol: "chat_completions",
