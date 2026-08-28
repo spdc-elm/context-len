@@ -60,7 +60,7 @@ protocol SSE bytes (copy only for inspection)
 | Existing frontend suite | verified | `cd frontend && npm test -- --run` | frontend changes |
 | Frontend build | verified | `cd frontend && npm run build` | renderer/type changes |
 | Local launcher | verified | `./scripts/start-local.sh` with mock upstream | runtime seam changes |
-| P1/P2 browser loop | planned | local browser: select exchange, Raw expand/search, Chat Template, artifact switch, three protocols | any UX/state mismatch |
+| P1/P2 browser loop | planned | `CONTEXT_LENS_PROXY_URL=http://127.0.0.1:18080 ./scripts/seed-mock-workspace.sh`; local browser: select all three protocols, Raw expand/search, Chat Template, artifact switch | any UX/state mismatch |
 | SSE browser loop | planned | local mock stream: release, live assistant/tool/reasoning, end/error/cancel | event/reducer mismatch |
 | Secret scan | planned | repository/config/log scan without printing values | any credential exposure |
 | Real upstream | deferred | no probe in this cycle | leader explicitly authorizes safe provision |

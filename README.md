@@ -43,11 +43,20 @@ go run ./cmd/context-lens
 
 Go 服务默认监听 `127.0.0.1:8080`；Vite 工作台默认监听 `127.0.0.1:5173`，并把 `/api` 转发到 Go 服务。LLM 协议入口保持原路径：`/v1/responses`、`/v1/chat/completions`、`/v1/messages` 和 `/v1/models`。工作台 API 位于 `/api`。
 
+也可以用确定性本地 fixture 填充工作台，供浏览器验收三种协议的 JSON / SSE exchange：
+
+```bash
+CONTEXT_LENS_PROXY_URL=http://127.0.0.1:8080 ./scripts/seed-mock-workspace.sh
+```
+
+脚本只向本地 context-lens proxy 发送仓库内 synthetic fixture，不连接真实上游，也不打印 body。
+
 完整本地反馈命令：
 
 ```bash
 make test
 ```
+
 
 ## 参考资料
 
