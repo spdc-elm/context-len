@@ -52,7 +52,7 @@ export function renderQwenBlocks(document: ContextDocument): RenderedContextBloc
   const ordinary = document.blocks.filter((block) => block.kind !== "tool_definition");
   const rendered: RenderedContextBlock[] = [];
   if (definitions.length > 0) {
-    const system = ordinary.find((block) => block.kind === "system");
+    const system = ordinary[0]?.kind === "system" ? ordinary[0] : undefined;
     const merged: ContextBlock = {
       ...(definitions[0]),
       id: "tool_definitions:/tools",
