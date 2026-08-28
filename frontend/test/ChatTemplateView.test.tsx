@@ -177,6 +177,22 @@ describe("ChatTemplateView", () => {
     expect(plain.querySelector(".ctx-block.chat-template-system")).not.toBeNull();
   });
 
+  it("renders multi-line strings as a collapsible text block", () => {
+    const request = JSON.stringify({
+      messages: [{ role: "user", content: "call the tool" }],
+      tools: [{ type: "function", function: { name: "lookup", description: "line1\nline2\nline3", parameters: {} } }],
+    });
+    const rendered = renderView({ protocol: "chat_completions", body: request });
+    const collapsed = rendered.querySelector(".ctx-json-text");
+    expect(collapsed).not.toBeNull();
+    expect(collapsed?.querySelector(".ctx-json-text-block")).toBeNull();
+    expect(collapsed?.textContent).toContain("line1");
+    click(collapsed?.querySelector("button.chevron") ?? null);
+    const block = rendered.querySelector(".ctx-json-text-block");
+    expect(block).not.toBeNull();
+    expect(block?.textContent).toContain("line1\nline2");
+  });
+
   it("shows the SSE phase placeholder for event-stream artifacts", () => {
     const rendered = renderView({
       protocol: "chat_completions",

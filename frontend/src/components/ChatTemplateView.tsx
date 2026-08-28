@@ -263,6 +263,22 @@ function JsonNode({
       if (nested !== undefined) {
         return <JsonNode id={`${id}~`} value={nested} depth={0} collapsed={collapsed} onToggle={onToggle} />;
       }
+      if (value.includes("\n")) {
+        // Multi-line strings render as a collapsible text block (like the Raw
+        // view's long-string handling) so `\n` reads as real line breaks.
+        const open = collapsed[id] ?? false;
+        const label = `Toggle text ${id}`;
+        return (
+          <span className="ctx-json-text">
+            <Chevron open={open} onToggle={() => onToggle(id, false)} label={label} />
+            {open ? (
+              <pre className="ctx-json-text-block">{value}</pre>
+            ) : (
+              <code className="ctx-json-leaf ctx-json-string" onClick={() => onToggle(id, false)} role="button" tabIndex={0}>{JSON.stringify(value.slice(0, 60))}{value.length > 60 ? "…" : ""}</code>
+            )}
+          </span>
+        );
+      }
       return <span className="ctx-json-leaf ctx-json-string">"{value}"</span>;
     }
     return <span className={`ctx-json-leaf ctx-json-${value === null ? "null" : typeof value}`}>{String(value)}</span>;

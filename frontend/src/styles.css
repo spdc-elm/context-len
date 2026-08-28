@@ -303,6 +303,10 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .ctx-json-key { color: var(--accent); font-size: 11px; }
 .ctx-json-leaf { color: var(--subtle); font-size: 11px; }
 .ctx-json-string { color: #9dd3a8; }
+.ctx-json-text { display: inline-flex; align-items: baseline; gap: 6px; }
+.ctx-json-text-block { display: block; margin: 2px 0 4px; padding: 6px 9px; border-left: 2px solid var(--line-bright); border-radius: 3px; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.ctx-json-text .ctx-json-leaf { cursor: pointer; }
+.ctx-json-text .ctx-json-leaf:hover { text-decoration: underline; }
 .ctx-json-number { color: #e0b578; }
 .ctx-json-boolean { color: #b8a3e3; }
 .ctx-json-null { color: var(--muted); font-style: italic; }
@@ -332,6 +336,7 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .theme-light .ctx-block.chat-template-tool_result > .ctx-tag-line > .ctx-marker { color: #b4532e; }
 .theme-light .ctx-block.chat-template-system > .ctx-tag-line > .ctx-marker, .theme-light .ctx-block.chat-template-developer > .ctx-tag-line > .ctx-marker { color: #5c718a; }
 .theme-light .ctx-json-string { color: #2f7d4f; }
+.theme-light .ctx-json-text-block { color: #334155; border-left-color: #b8c3d0; }
 .theme-light .ctx-json-number { color: #9a6700; }
 .theme-light .ctx-json-boolean { color: #7c5cd6; }
 .theme-light .raw-json-node-summary, .theme-light .raw-json-node-pointer { color: #64748b; }
