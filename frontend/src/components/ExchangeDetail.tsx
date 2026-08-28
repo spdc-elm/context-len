@@ -253,7 +253,7 @@ function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies,
   return (
     <div className="artifact-picker">
       <span className="picker-label">Artifact</span>
-      <select aria-label="Artifact" value={preferred?.artifact_id ?? ""} onChange={(event) => {
+      <select name="artifact" aria-label="Artifact" value={preferred?.artifact_id ?? ""} onChange={(event) => {
         const ref = refs.find((artifact) => artifact.artifact_id === event.target.value);
         if (ref) {
           onArtifactSelect(ref.artifact_id);
@@ -399,7 +399,7 @@ export function ExchangeDetail({
           </div>
           <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
         </div>
-        {(activeTab === "raw" || activeTab === "pretty") && <div className="search-toolbar"><label>Search <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label><label>JSON path <input value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} placeholder="$.messages[0]" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
+        {(activeTab === "raw" || activeTab === "pretty") && <div className="search-toolbar"><label>Search <input name="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label><label>JSON path <input name="json-path" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} placeholder="$.messages[0]" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
         <div className="viewer-body">
           {activeTab === "raw" && <RawBody body={body} search={search} />}
           {activeTab === "pretty" && (body !== undefined ? <pre className="code-view" aria-label="Pretty artifact body">{prettyAtPath(body, jsonPath)}</pre> : <div className="body-placeholder">Load an artifact to render a projection. Pretty output is display-only.</div>)}

@@ -61,8 +61,8 @@ protocol SSE bytes (copy only for inspection)
 | Frontend build | verified | `cd frontend && npm run build` | renderer/type changes |
 | Local launcher | verified | `./scripts/start-local.sh` with mock upstream | runtime seam changes |
 | Mock upstream + visual seed | verified | `scripts/start-local.sh` supports local-only fixture upstream; `CONTEXT_LENS_PROXY_URL=http://127.0.0.1:18080 ./scripts/seed-mock-workspace.sh` produced 12 exchanges across all three protocols (six additional seeded runs); mock flushes SSE fixture lines and does not log bodies | mock route/fixture changes |
-| Chrome DevTools attachment | expected-red | `chrome-devtools` 1.5.0 is installed; port `127.0.0.1:9222` is listening, but `/json/version` and `/json/list` return 404 and `DevToolsActivePort` mtime is stale (`2026-08-26`), so no endpoint has been safely verified | leader restarts/opens an explicitly controlled Chrome with a fresh verified `wsEndpoint` and keeps the workbench tab open |
-| P1/P2 browser loop | planned | attach to controlled Chrome, open `http://127.0.0.1:15173/`, then use seeded exchanges; do not use unknown user tabs | attachment becomes verified |
+| Chrome DevTools attachment | verified | Fresh `wsEndpoint` from `127.0.0.1:9222/json/version`; explicit attach succeeded, controlled page `http://127.0.0.1:15173/` listed as selected | Chrome session ends or endpoint changes |
+| Baseline browser smoke | verified | Attached screenshot + accessibility snapshot; six seeded exchanges visible in latest-first order; collapse/expand and Raw/Pretty tab clicks work; network requests are local; after favicon/form-field cleanup console has no error/issue entries | P1/P2 implementation changes |
 | SSE browser loop | planned | local mock stream: release, live assistant/tool/reasoning, end/error/cancel | event/reducer mismatch |
 | Secret scan | planned | repository/config/log scan without printing values | any credential exposure |
 | Real upstream | deferred | no probe in this cycle | leader explicitly authorizes safe provision |

@@ -9,7 +9,7 @@ export default defineConfig({
     // Keep browser development same-origin while forwarding workspace calls
     // to the local Go process. Production embeds the UI on the API origin.
     proxy: {
-      "/api": { target: "http://127.0.0.1:8080", ws: true },
+      "/api": { target: `${process.env.CONTEXT_LENS_BACKEND_URL ?? "http://127.0.0.1:8080"}`, ws: true },
     },
   },
   test: {

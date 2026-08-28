@@ -68,7 +68,7 @@ fi
 
 (
   cd "$ROOT_DIR/frontend"
-  npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT"
+  CONTEXT_LENS_BACKEND_URL="http://$BACKEND_ADDR" npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT"
 ) >"$RUN_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 
