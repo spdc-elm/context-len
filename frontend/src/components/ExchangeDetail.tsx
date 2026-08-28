@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   ArtifactRef,
   ExchangeSnapshot,
@@ -8,6 +8,9 @@ import type {
 } from "../contracts";
 import { formatWorkspaceTime } from "../time";
 import type { DetailTab, LoadedArtifact } from "../workspaceState";
+import { normalizeContext } from "../contextIr";
+import { QWEN_CHAT_TEMPLATE_NAME, renderQwenBlocks } from "../qwenChatTemplate";
+import RawJsonTree from "./RawJsonTree";
 
 export type OperatorAction =
   | "forward_unchanged"
@@ -34,9 +37,7 @@ interface ExchangeDetailProps {
   loadedBodies: Record<string, LoadedArtifact>;
   bodyLoading: boolean;
   search: string;
-  jsonPath: string;
   onSearchChange: (value: string) => void;
-  onJsonPathChange: (value: string) => void;
   onLoadBody: (artifact: ArtifactRef) => void;
   onDownloadBody: (artifact: ArtifactRef) => void;
   onCommand: (intent: CommandIntent) => void;
@@ -45,7 +46,7 @@ interface ExchangeDetailProps {
 
 const tabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "raw", label: "Raw", description: "Opaque artifact bytes" },
-  { id: "pretty", label: "Pretty", description: "Projection only" },
+  { id: "chat_template", label: "Chat Template", description: "Qwen ChatML" },
   { id: "sse", label: "SSE", description: "Event projection" },
 ];
 
@@ -90,43 +91,13 @@ function artifactForTab(snapshot: ExchangeSnapshot | undefined, tab: DetailTab, 
   const responseRefs = snapshot.response.artifact_refs ?? [];
   const requestRefs = snapshot.request.artifact_refs ?? [];
   if (tab === "sse") return responseRefs.find((artifact) => artifact.content_type.includes("event-stream")) ?? responseRefs[0];
-  if (tab === "raw" || tab === "pretty") return requestRefs[0] ?? responseRefs[0];
+  if (tab === "raw" || tab === "chat_template") return requestRefs[0] ?? responseRefs[0];
   return responseRefs[0] ?? requestRefs[0];
 }
 
 function bodyFor(artifact: ArtifactRef | undefined, loadedBodies: Record<string, LoadedArtifact>): string | undefined {
   if (!artifact) return undefined;
   return loadedBodies[artifact.artifact_id]?.text;
-}
-
-function prettyAtPath(body: string, path: string): string {
-  if (!path.trim()) return prettyBody(body);
-  try {
-    let value: unknown = JSON.parse(body);
-    const tokens = path.startsWith("/")
-      ? path.slice(1).split("/").filter(Boolean).map((token) => token.replaceAll("~1", "/").replaceAll("~0", "~"))
-      : path.replace(/^\$\.?/, "").replace(/\[(\d+)\]/g, ".$1").split(".").filter(Boolean);
-    for (const token of tokens) {
-      if (value === null || typeof value !== "object" || !(token in value)) return `JSON path not found: ${path}`;
-      value = (value as Record<string, unknown>)[token];
-    }
-    return JSON.stringify(value, null, 2);
-  } catch (error) { return `JSON path error: ${error instanceof Error ? error.message : String(error)}`; }
-}
-
-function prettyBody(body: string | undefined): string {
-  if (body === undefined) return "Select an artifact to load its body.";
-  try {
-    return JSON.stringify(JSON.parse(body) as unknown, null, 2);
-  } catch {
-    return body;
-  }
-}
-
-function matchingLines(body: string | undefined, search: string): Set<number> {
-  if (!body || !search.trim()) return new Set();
-  const needle = search.toLocaleLowerCase();
-  return new Set(body.split("\n").flatMap((line, index) => line.toLocaleLowerCase().includes(needle) ? [index] : []));
 }
 
 function parseSse(body: string): NonNullable<InspectionProjection["stream_events"]> {
@@ -207,17 +178,6 @@ function projectionFromBody(body: string, artifact: ArtifactRef | undefined, pro
   }
 }
 
-function RawBody({ body, search }: { body?: string; search: string }) {
-  const highlighted = useMemo(() => matchingLines(body, search), [body, search]);
-  if (body === undefined) return <div className="body-placeholder">Load an artifact to inspect raw bytes. The viewer never rewrites transport data.</div>;
-  const lines = body.split("\n");
-  return (
-    <pre className="code-view" aria-label="Raw artifact body">
-      {lines.map((line, index) => <span className={highlighted.has(index) ? "line match" : "line"} key={`${index}-${line}`}>{line}{index < lines.length - 1 ? "\n" : ""}</span>)}
-    </pre>
-  );
-}
-
 function ProjectionBody({ exchange, tab, body, artifact }: { exchange: ExchangeSnapshot; tab: DetailTab; body?: string; artifact?: ArtifactRef }) {
   const stored = tab === "sse" ? exchange.response.projection : exchange.request.projection ?? exchange.response.projection;
   const projection = body !== undefined && (!stored || stored.parse_status === "not_attempted" || (tab === "sse" && !stored.stream_events?.length))
@@ -243,6 +203,27 @@ function ProjectionBody({ exchange, tab, body, artifact }: { exchange: ExchangeS
         }, null, 2)}</pre>
       )}
     </div>
+  );
+}
+
+function ChatTemplateBody({ protocol, body, artifact }: { protocol: string; body?: string; artifact?: ArtifactRef }) {
+  if (body === undefined) return <div className="body-placeholder">Load an artifact to render the derived Qwen ChatML context.</div>;
+  if (artifact?.content_type.includes("event-stream") || /^\s*(?:event|data|id|retry):/m.test(body)) {
+    return <section className="chat-template-view" aria-label={QWEN_CHAT_TEMPLATE_NAME} data-chat-template="qwen-chatml"><div className="chat-template-heading"><strong>{QWEN_CHAT_TEMPLATE_NAME}</strong><span>SSE response · open SSE for raw events</span></div><div className="body-placeholder">This response artifact is an SSE stream. Its typed Chat Template delta projection is part of the SSE phase.</div></section>;
+  }
+  const document = normalizeContext(protocol, body);
+  const rendered = renderQwenBlocks(document);
+  return (
+    <section className="chat-template-view" aria-label={QWEN_CHAT_TEMPLATE_NAME} data-chat-template="qwen-chatml">
+      <div className="chat-template-heading"><strong>{QWEN_CHAT_TEMPLATE_NAME}</strong><span>{document.blocks.length} blocks</span></div>
+      {document.warnings.length > 0 && <div className="warning-box">{document.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
+      <div className="chat-template-stream">
+        {rendered.map(({ block: item, text }) => <article className={`chat-template-block chat-template-${item.kind}`} data-context-block="true" data-source-json-pointer={item.sourcePointer} key={item.id}>
+          <div className="chat-template-block-meta"><span>{item.kind}</span><code>{item.sourcePointer || "/"}</code></div>
+          <pre>{text}</pre>
+        </article>)}
+      </div>
+    </section>
   );
 }
 
@@ -307,9 +288,7 @@ export function ExchangeDetail({
   loadedBodies,
   bodyLoading,
   search,
-  jsonPath,
   onSearchChange,
-  onJsonPathChange,
   onLoadBody,
   onDownloadBody,
   onCommand,
@@ -399,10 +378,10 @@ export function ExchangeDetail({
           </div>
           <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
         </div>
-        {(activeTab === "raw" || activeTab === "pretty") && <div className="search-toolbar"><label>Search <input name="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label><label>JSON path <input name="json-path" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} placeholder="$.messages[0]" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
+        {(activeTab === "raw" || activeTab === "chat_template") && <div className="search-toolbar"><label>Search <input name="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
         <div className="viewer-body">
-          {activeTab === "raw" && <RawBody body={body} search={search} />}
-          {activeTab === "pretty" && (body !== undefined ? <pre className="code-view" aria-label="Pretty artifact body">{prettyAtPath(body, jsonPath)}</pre> : <div className="body-placeholder">Load an artifact to render a projection. Pretty output is display-only.</div>)}
+          {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
+          {activeTab === "chat_template" && <ChatTemplateBody protocol={String(exchange.protocol)} body={body} artifact={artifact} />}
           {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} />}
         </div>
       </section>

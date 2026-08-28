@@ -3,11 +3,10 @@ import {
   type ExchangeEvent,
   type ExchangeSnapshot,
   type GateMode,
-  type InspectionProjection,
   type WorkspacePolicy,
 } from "./contracts";
 
-export type DetailTab = "raw" | "pretty" | "sse";
+export type DetailTab = "raw" | "chat_template" | "sse";
 
 export interface LoadedArtifact {
   artifactId: string;
@@ -29,7 +28,6 @@ export interface WorkspaceState {
   bodyLoading: boolean;
   loadedBodies: Record<string, LoadedArtifact>;
   search: string;
-  jsonPath: string;
 }
 
 export type WorkspaceAction =
@@ -46,8 +44,7 @@ export type WorkspaceAction =
   | { type: "body_load_started" }
   | { type: "body_loaded"; body: LoadedArtifact }
   | { type: "body_load_failed"; error: string }
-  | { type: "set_search"; value: string }
-  | { type: "set_json_path"; value: string };
+  | { type: "set_search"; value: string };
 
 export const initialWorkspaceState: WorkspaceState = {
   exchanges: [],
@@ -58,7 +55,6 @@ export const initialWorkspaceState: WorkspaceState = {
   bodyLoading: false,
   loadedBodies: {},
   search: "",
-  jsonPath: "",
 };
 
 function revisionValue(exchange: ExchangeSnapshot): number {
@@ -172,7 +168,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "clear_error":
       return { ...state, error: undefined };
     case "select_exchange":
-      return { ...state, selectedExchangeId: action.exchangeId, loadedBodies: {}, search: "", jsonPath: "" };
+      return { ...state, selectedExchangeId: action.exchangeId, loadedBodies: {}, search: "" };
     case "set_tab":
       return { ...state, activeTab: action.tab };
     case "set_policy":
@@ -207,17 +203,9 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, bodyLoading: false, error: action.error };
     case "set_search":
       return { ...state, search: action.value };
-    case "set_json_path":
-      return { ...state, jsonPath: action.value };
   }
 }
 
 export function selectedExchange(state: WorkspaceState): ExchangeSnapshot | undefined {
   return state.exchanges.find((exchange) => exchange.exchange_id === state.selectedExchangeId);
-}
-
-export function selectedProjection(snapshot: ExchangeSnapshot | undefined, tab: DetailTab): InspectionProjection | undefined {
-  if (!snapshot) return undefined;
-  if (tab === "sse") return snapshot.response.projection;
-  return snapshot.request.projection ?? snapshot.response.projection;
 }

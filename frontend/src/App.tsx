@@ -209,9 +209,7 @@ export function App({ api }: AppProps) {
           loadedBodies={state.loadedBodies}
           bodyLoading={state.bodyLoading}
           search={state.search}
-          jsonPath={state.jsonPath}
           onSearchChange={(value) => dispatch({ type: "set_search", value })}
-          onJsonPathChange={(value) => dispatch({ type: "set_json_path", value })}
           onLoadBody={(artifact) => void loadBody(artifact)}
           onDownloadBody={(artifact) => void downloadBody(artifact)}
           onCommand={(intent) => void runCommand(intent)}

@@ -104,10 +104,9 @@ describe("workspace reducer", () => {
   it("resets body/search state when selecting another exchange", () => {
     const exchange = snapshot();
     const loaded = workspaceReducer(initialWorkspaceState, { type: "load_succeeded", exchanges: [exchange], policy: exchange.policy });
-    const withSearch: WorkspaceState = { ...loaded, search: "foo", jsonPath: "$.messages", loadedBodies: { artifact: { artifactId: "artifact", text: "{}", start: 0, end: 2, totalSize: 2, complete: true } } };
+    const withSearch: WorkspaceState = { ...loaded, search: "foo", loadedBodies: { artifact: { artifactId: "artifact", text: "{}", start: 0, end: 2, totalSize: 2, complete: true } } };
     const next = workspaceReducer(withSearch, { type: "select_exchange", exchangeId: "another" });
     expect(next.search).toBe("");
-    expect(next.jsonPath).toBe("");
     expect(next.loadedBodies).toEqual({});
   });
 });

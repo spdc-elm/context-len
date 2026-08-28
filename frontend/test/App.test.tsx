@@ -49,18 +49,31 @@ describe("workbench shell", () => {
       await Promise.resolve();
     });
     expect((rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement).value).toBe(responseOption!.value);
-    const pretty = [...rendered.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Pretty"));
+    const chatTemplate = [...rendered.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Chat Template"));
     await act(async () => {
-      pretty?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      chatTemplate?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
     expect((rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement).value).toBe(responseOption!.value);
   });
 
+  it("renders Qwen ChatML as a derived continuous context stream", async () => {
+    const rendered = await renderApp();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    const chatTemplate = [...rendered.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent?.startsWith("Chat Template"));
+    await act(async () => {
+      chatTemplate?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(rendered.querySelector('[data-chat-template="qwen-chatml"]')).not.toBeNull();
+    expect(rendered.textContent).toContain("Chat Template · Qwen ChatML");
+    expect(rendered.textContent).toContain("<|im_start|>");
+  });
   it("loads the selected artifact automatically", async () => {
     const rendered = await renderApp();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(rendered.querySelector('[aria-label="Raw artifact body"]')?.textContent).toContain('"model"');
+    expect(rendered.querySelector('[data-json-tree-view="true"]')?.textContent).toContain('model');
     expect(rendered.textContent).not.toContain("Load body");
     expect(rendered.textContent).not.toContain("Reload");
   });

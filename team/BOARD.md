@@ -9,9 +9,9 @@
 | Gate | 状态 | 完成条件 | 验收者 |
 |---|---|---|---|
 | P0 contract / docs freeze | verified | 旧 team 已归档；本 charter、board、Chat Template spec 与 runtime/protocol 接缝一致 | manager |
-| P1 Raw Tree | in_progress | 三协议 JSON 结构化展示组件与交互，非 JSON fallback | manager + Raw Tree worker | IR contract |
-| P2 Chat Template | in_progress | 三协议 normalizer + Context IR + Qwen ChatML renderer | manager + IR/Qwen worker | IR contract |
-| P1/P2 joint acceptance | planned | Raw + Chat Template 的浏览器体验、测试、artifact 不变证据通过 | leader | P1 + P2 |
+| P1 Raw Tree | in_review | Three-protocol JSON/raw fixtures render as structured tree with semantic counts, message/tool summaries, search auto-expand/highlight, controls, source pointers, and plain-text fallback; `frontend/test/RawJsonTree.test.tsx` 7 passing | manager + Raw Tree worker | IR contract |
+| P2 Chat Template | in_review | Three-protocol checked-in JSON fixtures normalize to loss-aware Context IR and render continuous Qwen marker blocks with tools/reasoning/unknown/source pointers; `frontend/test/contextIr.test.ts`, `frontend/test/qwenChatTemplate.test.ts` 8 passing | manager + IR/Qwen worker | IR contract |
+| P1/P2 joint acceptance | awaiting_leader | Browser screenshots `/tmp/context-lens-phase1-final.png`, `/tmp/context-lens-phase1-chat.png`, `/tmp/context-lens-chat-protocol.png`, `/tmp/context-lens-anthropic-template.png`; controlled Chrome shows Raw Tree and Qwen view; exact artifact hash remains visible and local network/console are clean | leader | P1 + P2 |
 | P3 SSE IR delta | planned | 三协议 SSE 事件归一为 typed delta；原始事件保留；未知事件 passthrough | manager |
 | P4 realtime renderer | planned | assistant/reasoning/tool call/tool result 增量渲染及 completed/failed/cancelled | manager |
 | P3/P4 SSE acceptance | planned | 本地 mock stream、浏览器实时交互、原始 SSE bytes 和取消/错误证据通过 | leader |
@@ -65,7 +65,7 @@ protocol SSE bytes (copy only for inspection)
 | Loop | Status | Command / evidence | Reopen condition |
 |---|---|---|---|
 | Existing backend suite | verified | `go test -race ./...`, `go vet ./...` | contract or backend changes |
-| Existing frontend suite | verified | `cd frontend && npm test -- --run` | frontend changes |
+| Existing frontend suite | verified | `cd frontend && npm test -- --run` (32 tests, now including Raw/IR/Qwen) | frontend changes |
 | Frontend build | verified | `cd frontend && npm run build` | renderer/type changes |
 | Local launcher | verified | `./scripts/start-local.sh` with mock upstream | runtime seam changes |
 | Mock upstream + visual seed | verified | `scripts/start-local.sh` supports local-only fixture upstream; `CONTEXT_LENS_PROXY_URL=http://127.0.0.1:18080 ./scripts/seed-mock-workspace.sh` produced 12 exchanges across all three protocols (six additional seeded runs); mock flushes SSE fixture lines and does not log bodies | mock route/fixture changes |
