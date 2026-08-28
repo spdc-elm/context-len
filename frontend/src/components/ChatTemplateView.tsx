@@ -8,6 +8,7 @@ import {
   qwenBlockRole,
   renderQwenBlocks,
 } from "../qwenChatTemplate";
+import { loadQwenScopeRegistry, scopeByName } from "../templateScopes";
 
 interface ChatTemplateViewProps {
   protocol: string;
@@ -26,8 +27,11 @@ type Segment =
       blockKind?: string;
       pointer?: string;
       defaultOpen?: boolean;
+      fromTemplate?: boolean;
       children: Segment[];
     };
+
+type TagSegment = Extract<Segment, { kind: "tag" }>;
 
 /** Closing tags are assembled at runtime so this file contains no literal
  * tool-call terminator sequences; the rendered text is identical. */
@@ -67,29 +71,108 @@ function parseMaybeJson(text: string | undefined): unknown {
   }
 }
 
-type TagSegment = Extract<Segment, { kind: "tag" }>;
+const SCOPE_TAG_RE = /<([A-Za-z_][A-Za-z0-9_.:-]*)>/;
+const MAX_PARSE_DEPTH = 8;
+const MAX_SCOPES_PER_TEXT = 200;
+
+/** Find the index of the close tag matching the scope opened at `from`,
+ * counting nested same-name opens, or -1 when unbalanced. */
+function findScopeClose(text: string, name: string, from: number): number {
+  const open = `<${name}>`;
+  const close = "</" + name + ">";
+  let depth = 1;
+  let cursor = from;
+  while (cursor <= text.length) {
+    const nextOpen = text.indexOf(open, cursor);
+    const nextClose = text.indexOf(close, cursor);
+    if (nextClose === -1) return -1;
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth += 1;
+      cursor = nextOpen + open.length;
+    } else {
+      depth -= 1;
+      if (depth === 0) return nextClose;
+      cursor = nextClose + close.length;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Split message text into text and nested-scope segments by detecting any
+ * balanced `<tag>...</tag>` pair. This is a display-only heuristic: it covers
+ * scopes the Qwen template defines (tools / tool_call / tool_response / think)
+ * and the XML conventions providers and prompt authors embed in content
+ * (Anthropic-style prompt XML, custom tags). Unbalanced or self-closing tags
+ * stay literal text; nothing is rewritten back to the artifact.
+ */
+export function parseContentScopes(id: string, text: string, depth = 0): Segment[] {
+  if (depth > MAX_PARSE_DEPTH) return [{ kind: "text", id: `${id}/overflow`, text }];
+  const segments: Segment[] = [];
+  let rest = text;
+  let budget = MAX_SCOPES_PER_TEXT;
+  while (rest.length > 0 && budget > 0) {
+    budget -= 1;
+    const match = rest.match(SCOPE_TAG_RE);
+    if (!match || match.index === undefined) {
+      segments.push({ kind: "text", id: `${id}/t${segments.length}`, text: rest });
+      return segments;
+    }
+    const start = match.index;
+    const name = match[1];
+    const contentStart = start + match[0].length;
+    if (start > 0) segments.push({ kind: "text", id: `${id}/t${segments.length}`, text: rest.slice(0, start) });
+    const closeIndex = findScopeClose(rest, name, contentStart);
+    if (closeIndex === -1) {
+      // Unbalanced open: keep the literal tag in the text stream.
+      segments.push({ kind: "text", id: `${id}/t${segments.length}`, text: rest.slice(start, contentStart) });
+      rest = rest.slice(contentStart);
+      continue;
+    }
+    const content = rest.slice(contentStart, closeIndex);
+    segments.push({
+      kind: "tag",
+      id: `${id}/${name}/${start}`,
+      name,
+      children: parseContentScopes(`${id}/${name}/${start}`, content, depth + 1),
+    });
+    rest = rest.slice(closeIndex + name.length + 3);
+  }
+  if (rest.length > 0) segments.push({ kind: "text", id: `${id}/tail`, text: rest });
+  return segments;
+}
+
+function textOrScopes(id: string, text: string): Segment[] {
+  if (!text) return [];
+  return parseContentScopes(id, text);
+}
 
 function blockToSegment(block: ContextBlock, index: number): TagSegment {
+  const registry = loadQwenScopeRegistry();
   const role = qwenBlockRole(block);
   const children: Segment[] = [];
   if (block.kind === "tool_definition") {
-    children.push({ kind: "text", id: `${block.id}/system`, text: block.text || QWEN_DEFAULT_SYSTEM });
+    children.push(...textOrScopes(`${block.id}/system`, block.text || QWEN_DEFAULT_SYSTEM));
+    const toolsName = scopeByName(registry, "tools")?.name ?? "tools";
     children.push({
       kind: "tag",
       id: `${block.id}/tools`,
-      name: "tools",
+      name: toolsName,
+      fromTemplate: true,
       children: block.content.map((part, partIndex) => ({
         kind: "json" as const,
         id: `${block.id}/tool/${partIndex}`,
         value: part.value,
       })),
     });
-    children.push({ kind: "text", id: `${block.id}/instruction`, text: QWEN_TOOL_CALL_INSTRUCTION });
+    children.push(...textOrScopes(`${block.id}/instruction`, QWEN_TOOL_CALL_INSTRUCTION));
   } else if (block.kind === "tool_call") {
+    const callName = scopeByName(registry, "tool_call")?.name ?? "tool_call";
     children.push({
       kind: "tag",
       id: `${block.id}/call`,
-      name: "tool_call",
+      name: callName,
+      fromTemplate: true,
       children: [
         {
           kind: "json",
@@ -99,22 +182,31 @@ function blockToSegment(block: ContextBlock, index: number): TagSegment {
       ],
     });
   } else if (block.kind === "tool_result") {
+    const responseName = scopeByName(registry, "tool_response")?.name ?? "tool_response";
     children.push({
       kind: "tag",
       id: `${block.id}/result`,
-      name: "tool_response",
+      name: responseName,
+      fromTemplate: true,
       children: [{ kind: "json", id: `${block.id}/result/json`, value: parseMaybeJson(block.text) }],
     });
   } else if (block.kind === "reasoning" || block.kind === "thinking") {
-    children.push({
-      kind: "tag",
-      id: `${block.id}/think`,
-      name: "think",
-      defaultOpen: false,
-      children: [{ kind: "text", id: `${block.id}/think/text`, text: block.text ?? "" }],
-    });
+    const thinkScope = scopeByName(registry, "think");
+    const inner: Segment[] = textOrScopes(`${block.id}/think/text`, block.text ?? "");
+    if (thinkScope) {
+      children.push({
+        kind: "tag",
+        id: `${block.id}/think`,
+        name: thinkScope.name,
+        fromTemplate: true,
+        defaultOpen: false,
+        children: inner,
+      });
+    } else {
+      children.push(...inner);
+    }
   } else if (block.text !== undefined && block.text !== "") {
-    children.push({ kind: "text", id: `${block.id}/text`, text: block.text });
+    children.push(...textOrScopes(`${block.id}/text`, block.text));
   } else {
     children.push(
       ...block.content.map((part, partIndex) => ({
@@ -132,7 +224,7 @@ function blockToSegment(block: ContextBlock, index: number): TagSegment {
     blockKind: block.kind,
     pointer: block.sourcePointer,
     children,
-  } satisfies TagSegment;
+  };
 }
 
 interface CollapseProps {
@@ -195,14 +287,35 @@ function JsonNode({
   );
 }
 
+function SegmentList({ segments, depth, collapsed, onToggle }: { segments: Segment[]; depth: number } & CollapseProps) {
+  return (
+    <>
+      {segments.map((child) =>
+        child.kind === "text" ? (
+          <div className="ctx-text" key={child.id}>
+            {child.text}
+          </div>
+        ) : child.kind === "json" ? (
+          <div className="ctx-json" key={child.id}>
+            <JsonNode id={child.id} value={child.value} depth={depth + 1} collapsed={collapsed} onToggle={onToggle} />
+          </div>
+        ) : (
+          <TagView key={child.id} segment={child} depth={depth + 1} collapsed={collapsed} onToggle={onToggle} />
+        ),
+      )}
+    </>
+  );
+}
+
 function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment; depth: number } & CollapseProps) {
   const open = collapsed[segment.id] ?? segment.defaultOpen ?? true;
   const header = tagHeader(segment.name, segment.marker);
   const footer = tagFooter(segment.name, segment.marker);
   const headerClass = segment.marker ? "ctx-marker" : "ctx-inner-tag";
+  const scopeClass = segment.marker ? "" : segment.fromTemplate ? " ctx-template-scope" : " ctx-content-scope";
   return (
     <div
-      className={`ctx-tag${segment.marker ? " ctx-block" : ""} ${segment.blockKind ? `chat-template-${segment.blockKind}` : ""}`}
+      className={`ctx-tag${segment.marker ? " ctx-block" : ""}${scopeClass}${segment.blockKind ? ` chat-template-${segment.blockKind}` : ""}`}
       data-ctx-tag={segment.name}
       data-ctx-marker={segment.marker ? "chatml" : undefined}
       data-source-json-pointer={segment.pointer}
@@ -220,19 +333,7 @@ function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment;
       {open && (
         <>
           <div className="ctx-tag-body">
-            {segment.children.map((child) =>
-              child.kind === "text" ? (
-                <div className="ctx-text" key={child.id}>
-                  {child.text}
-                </div>
-              ) : child.kind === "json" ? (
-                <div className="ctx-json" key={child.id}>
-                  <JsonNode id={child.id} value={child.value} depth={depth + 1} collapsed={collapsed} onToggle={onToggle} />
-                </div>
-              ) : (
-                <TagView key={child.id} segment={child} depth={depth + 1} collapsed={collapsed} onToggle={onToggle} />
-              ),
-            )}
+            <SegmentList segments={segment.children} depth={depth} collapsed={collapsed} onToggle={onToggle} />
           </div>
           <div className="ctx-tag-line">
             <span className="ctx-chevron-spacer" aria-hidden="true" />
@@ -248,6 +349,7 @@ export function ChatTemplateView({ protocol, body, artifact }: ChatTemplateViewP
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const document = useMemo(() => normalizeContext(protocol, body ?? ""), [protocol, body]);
   const blocks = useMemo(() => renderQwenBlocks(document), [document]);
+  const segments = useMemo(() => blocks.map(({ block }, index) => blockToSegment(block, index)), [blocks]);
   const isSse =
     artifact?.content_type.includes("event-stream") || /^\s*(?:event|data|id|retry):/m.test(body ?? "");
 
@@ -291,15 +393,7 @@ export function ChatTemplateView({ protocol, body, artifact }: ChatTemplateViewP
         </div>
       )}
       <div className="chat-template-stream">
-        {blocks.map(({ block }, index) => (
-          <TagView
-            key={block.id}
-            segment={blockToSegment(block, index)}
-            depth={0}
-            collapsed={collapsed}
-            onToggle={toggle}
-          />
-        ))}
+        <SegmentList segments={segments} depth={-1} collapsed={collapsed} onToggle={toggle} />
       </div>
     </section>
   );

@@ -83,6 +83,7 @@ protocol SSE bytes (copy only for inspection)
 - SSE 是 MVP 内能力，但放在 P1/P2 联合验收之后；不作为常驻主阅读 Tab。
 - Qwen tool ordering was verified against official Qwen2.5/Qwen3 templates: tool definitions are injected into the initial system segment before messages; tool results use a user segment. The renderer was corrected accordingly. Human-readable JSON whitespace remains a display choice, not a token-exact claim.
 - Chat Template renders as a nested collapsible structure: ChatML segments contain inner tool tags and collapsible JSON; thinking blocks default collapsed. Expand/collapse chevrons in both Chat Template and Raw Tree are subtle borderless SVG triangles that blend into the background (0 border, transparent background, opacity .55, accent on hover).
+- The scope grammar is template-as-data: official Qwen2.5/Qwen3 chat_template Jinja files are vendored (`frontend/src/templates/`, SHA-256 in README) and parsed at runtime by `templateScopes.ts` into a scope registry (tools / tool_call / tool_response / think); the view no longer hardcodes scope names. Message text additionally gets generic balanced-tag detection so prompt-authored XML (e.g. Anthropic-style `<reference>` scopes) renders as collapsible scopes. Visual hierarchy uses one outer block border per ChatML segment; nested scopes use lighter 1px indent lines (no double border).
 - provider extension / passthrough / unknown / source pointer 从第一版预留。
 - request/response artifact 自动按需加载；原始 artifact immutable。
 

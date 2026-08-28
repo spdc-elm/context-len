@@ -74,9 +74,9 @@ describe("ChatTemplateView", () => {
     expect(rendered.textContent).toContain("<tools>");
     expect(rendered.textContent).toContain("You are precise.");
     expect(rendered.querySelector('[data-ctx-tag="tools"]')).not.toBeNull();
-    expect(rendered.querySelector('[data-ctx-tag="tool_call"]')?.textContent).toContain("lookup");
-    expect(rendered.querySelector('[data-ctx-tag="tool_call"]')?.textContent).toContain("alpha");
-    expect(rendered.querySelector('[data-ctx-tag="tool_response"]')?.textContent).toContain("value");
+    expect(rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope')?.textContent).toContain("lookup");
+    expect(rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope')?.textContent).toContain("alpha");
+    expect(rendered.querySelector('[data-ctx-tag="tool_response"].ctx-template-scope')?.textContent).toContain("value");
     expect(rendered.textContent).toContain("<|im_end|>");
     expect(rendered.querySelector("button.chevron")).not.toBeNull();
     expect(rendered.querySelector('[data-source-json-pointer="/messages/2/tool_calls/0"]')).not.toBeNull();
@@ -84,21 +84,21 @@ describe("ChatTemplateView", () => {
 
   it("collapses nested tag regions behind a subtle chevron", () => {
     const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
-    const callTag = rendered.querySelector('[data-ctx-tag="tool_call"]');
+    const callTag = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope');
     expect(callTag?.textContent).toContain("alpha");
-    click(rendered.querySelector('[aria-label^="Toggle <tool_call"]'));
-    const collapsedTag = rendered.querySelector('[data-ctx-tag="tool_call"]');
+    click(callTag?.querySelector("button.chevron") ?? null);
+    const collapsedTag = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope');
     expect(collapsedTag?.textContent).not.toContain("alpha");
     expect(collapsedTag?.textContent).toContain(TOOL_CALL_CLOSE);
-    click(rendered.querySelector('[aria-label^="Toggle <tool_call"]'));
-    expect(rendered.querySelector('[data-ctx-tag="tool_call"]')?.textContent).toContain("alpha");
+    click(collapsedTag?.querySelector("button.chevron") ?? null);
+    expect(rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope')?.textContent).toContain("alpha");
   });
 
   it("collapses JSON containers independently of their tag", () => {
     const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
-    const jsonHead = rendered.querySelector('[data-ctx-tag="tool_call"] .ctx-json-head button.chevron');
+    const jsonHead = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope .ctx-json-head button.chevron');
     click(jsonHead);
-    const callTag = rendered.querySelector('[data-ctx-tag="tool_call"]');
+    const callTag = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope');
     expect(callTag?.textContent).not.toContain("alpha");
     expect(callTag?.textContent).toContain("{2}");
   });
@@ -110,6 +110,35 @@ describe("ChatTemplateView", () => {
     expect(think?.textContent).not.toContain("private reasoning");
     click(think?.querySelector("button.chevron") ?? null);
     expect(rendered.querySelector('[data-ctx-tag="think"]')?.textContent).toContain("private reasoning");
+  });
+
+  it("renders XML scopes embedded in message content", () => {
+    const request = JSON.stringify({
+      messages: [
+        {
+          role: "user",
+          content:
+            "Use <reference><name>docs</name><url>https://example.invalid</url></reference> when answering.",
+        },
+      ],
+    });
+    const rendered = renderView({ protocol: "chat_completions", body: request });
+    const reference = rendered.querySelector('[data-ctx-tag="reference"]');
+    expect(reference).not.toBeNull();
+    expect(reference?.textContent).toContain("docs");
+    expect(reference?.querySelector('[data-ctx-tag="name"]')).not.toBeNull();
+    expect(reference?.querySelector('[data-ctx-tag="url"]')).not.toBeNull();
+    click(reference?.querySelector("button.chevron") ?? null);
+    const collapsed = rendered.querySelector('[data-ctx-tag="reference"]');
+    expect(collapsed?.textContent).not.toContain("docs");
+    expect(collapsed?.textContent).toContain("</" + "reference>");
+  });
+
+  it("keeps unbalanced angle-bracket text literal", () => {
+    const request = JSON.stringify({ messages: [{ role: "user", content: "a < b and <orphan> stays text" }] });
+    const rendered = renderView({ protocol: "chat_completions", body: request });
+    expect(rendered.querySelector('[data-ctx-tag="orphan"]')).toBeNull();
+    expect(rendered.textContent).toContain("<orphan>");
   });
 
   it("shows the SSE phase placeholder for event-stream artifacts", () => {

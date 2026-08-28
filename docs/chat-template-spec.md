@@ -111,11 +111,20 @@ Raw 是 JSON 的结构化检视器，不是 Pretty JSON 文本。JSON 可解析�
 
 JSON 解析失败时 Raw 回退纯文本；不得因为 projection 失败阻断 bypass。
 
+## 4.1 Scope registry（template as data）
+
+ChatML renderer 不硬编码模板的闭合作用域语法。Qwen2.5-7B-Instruct 与 Qwen3-8B `tokenizer_config.json` 的官方 `chat_template` 字符串 vendored 在 `frontend/src/templates/`（来源与 SHA-256 见 `templates/README.md`）。`frontend/src/templateScopes.ts` 在运行时解析它们，得出作用域注册表：`<|im_start|>`/`<|im_end|>` 段标记，加上模板自身发射的每个平衡 XML 式标签对（`tools`、`tool_call`、`tool_response`、`think`）。Jinja 永不执行；只有作用域语法来自数据。后续接入 Llama/Mistral/Gemma 只需 vendored 其模板文件并加一行 import，视图跟随注册表。
+
+消息文本另外做通用的、仅显示用的平衡标签检测（`parseContentScopes`）：内容中任何良构的 `<tag>…</tag>` 对都成为可折叠作用域，同时覆盖模板定义作用域与 provider/提示词作者嵌入内容的 XML 惯例（Anthropic 风格提示词 XML、自定义标签）。不平衡或自闭合标签保持字面文本；该启发式不重写 artifact，也不是校验器。
+
 ## 5. Chat Template view
 
 Chat Template 是连续上下文流，不使用普通聊天产品的左右气泡，也不把每条 message 渲染成孤立的大卡片。marker、role 和 block 类型用轻量底色/左边线区分，内容保持编辑器式连续阅读。
 
 推荐视觉语义：
+
+- 每个 ChatML 段是一个大块，自带色边框；段内第一层内容直接使用该块对齐（不再嵌套第二条竖线）。
+- 深层嵌套作用域（tools / tool_call / tool_response / think / 内容 XML）用更轻的 1px 纵向缩进线，与顶层大块边框区分层级。
 
 ```text
 system/developer  muted blue-gray

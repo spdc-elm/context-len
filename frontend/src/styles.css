@@ -287,10 +287,13 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .ctx-tag-line { display: flex; align-items: center; gap: 6px; min-height: 20px; }
 .ctx-marker { color: var(--accent); font-weight: 600; font-size: 11px; }
 .ctx-inner-tag { color: var(--warning); font-weight: 600; font-size: 11px; }
-.ctx-tag[data-ctx-tag="think"] .ctx-inner-tag { color: #a78bca; }
+.ctx-template-scope > .ctx-tag-line > .ctx-inner-tag { color: var(--warning); font-weight: 600; font-size: 11px; }
+.ctx-content-scope > .ctx-tag-line > .ctx-inner-tag { color: #8ea3bd; font-weight: 500; font-size: 11px; }
+.ctx-tag[data-ctx-tag="think"] > .ctx-tag-line > .ctx-inner-tag { color: #a78bca; }
 .ctx-ellipsis { color: var(--muted); font-size: 11px; }
 .ctx-chevron-spacer { display: inline-block; width: 14px; flex: 0 0 14px; }
 .ctx-tag-body { margin-left: 7px; padding-left: 11px; border-left: 1px solid var(--line); }
+.ctx-block > .ctx-tag-body { margin-left: 0; padding-left: 21px; border-left: 0; }
 .ctx-text { margin: 2px 0; padding: 3px 0; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
 .ctx-json { margin: 2px 0; }
 .ctx-json-head, .ctx-json-inline { display: inline-flex; align-items: center; gap: 6px; }
@@ -313,8 +316,9 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .chat-template-tool_result { border-left-color: #c27d65; background: color-mix(in srgb, #c27d65 7%, transparent); }
 .chat-template-unknown { border-left-style: dashed; }
 .theme-light .ctx-marker { color: #176b52; }
-.theme-light .ctx-inner-tag { color: #a66a00; }
-.theme-light .ctx-tag[data-ctx-tag="think"] .ctx-inner-tag { color: #7c5cd6; }
+.theme-light .ctx-template-scope > .ctx-tag-line > .ctx-inner-tag { color: #a66a00; }
+.theme-light .ctx-content-scope > .ctx-tag-line > .ctx-inner-tag { color: #5b6b82; }
+.theme-light .ctx-tag[data-ctx-tag="think"] > .ctx-tag-line > .ctx-inner-tag { color: #7c5cd6; }
 .theme-light .ctx-json-string { color: #2f7d4f; }
 .theme-light .ctx-json-number { color: #9a6700; }
 .theme-light .ctx-json-boolean { color: #7c5cd6; }
