@@ -160,7 +160,8 @@ manager 是本文件唯一编辑者。RUN executor 不编辑 `team/`。
 
 ## RUN evidence notes
 
-- Leader 已明确说明 executor user quota 问题解决；manager 于本轮重新派发 exchange/gates、workspace API、protocol mutation、proxy e2e、frontend integration 和只读 adversarial review。
+- 用户反馈后，manager 删除了前端 body Diff 面板及其后端 `StructuredDiff`/mutation diff surface；保留 derived artifact、base hash 和 protocol validation。视图现在仅为 Raw / Pretty / SSE。
+- 新一轮 UX 改造进行中：gate 控件并入固定顶栏、Live Traffic 可折叠、浅色主题为默认、阅读区占据主空间、页面禁止外层滚动；待 manager 亲验截图/浏览器交互后更新状态。
 
 - T0 manager verified `go test -race ./...`, `go vet ./...`, live health probe, app proxy-route unit test, frontend install/test/build, and `scripts/start-local.sh` one-click smoke (backend health, Vite index, fixture response identity, workspace four refs).
 - T0 now includes `config.example.json` + ignored `config.local.json`: strict two-field (`base_url`, `api_key`) JSON loading, file permission check, server-only Bearer injection, and no-secret summary tests.

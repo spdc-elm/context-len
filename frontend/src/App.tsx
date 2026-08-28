@@ -14,6 +14,7 @@ import {
 } from "./workspaceState";
 import { TrafficQueue } from "./components/TrafficQueue";
 import { ExchangeDetail, type CommandIntent } from "./components/ExchangeDetail";
+import { WorkspaceTopbar } from "./components/WorkspaceTopbar";
 import "./styles.css";
 
 interface AppProps {
@@ -55,12 +56,32 @@ function downloadName(artifact: ArtifactRef): string {
   return `${safe}.bin`;
 }
 
+function initialTheme(): "light" | "dark" {
+  try {
+    const stored = window.localStorage.getItem("context-lens-theme");
+    return stored === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
 export function App({ api }: AppProps) {
   // Do not default the prop parameter to the mock: production renders use the
   // local same-origin REST/WS client, while tests retain explicit injection.
   const runtimeApi = useMemo(() => api ?? createLocalWorkspaceApi(), [api]);
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
   const [commandBusy, setCommandBusy] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("context-lens-theme", theme);
+    } catch {
+      // Persistence is a convenience; private browsing and embedded hosts may
+      // deliberately disable local storage.
+    }
+  }, [theme]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -162,20 +183,25 @@ export function App({ api }: AppProps) {
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand-lockup"><div className="brand-mark">✦</div><div><div className="brand-name">context<span>-lens</span></div><div className="brand-subtitle">LLM request workbench</div></div></div>
-        <div className="topbar-status"><span className="live-dot" /> <span>LOCAL API</span><span className="status-divider" /><span>{state.exchanges.length} exchanges</span><span className="status-divider" /><span>{heldCount} held</span></div>
-      </header>
-      <section className="policy-bar" aria-label="Intercept policy">
-        <div className="policy-title"><span className="eyebrow">INTERCEPT POLICY</span><span className="policy-caption">New exchanges only</span></div>
-        <label className="gate-toggle"><span>Request gate</span><button type="button" role="switch" aria-checked={state.policy.request_gate === "hold"} className={`switch ${state.policy.request_gate === "hold" ? "on" : ""}`} onClick={() => void changeGate("request_gate", state.policy.request_gate === "hold" ? "pass" : "hold")}><span /></button><strong>{state.policy.request_gate}</strong></label>
-        <label className="gate-toggle"><span>Response gate</span><button type="button" role="switch" aria-checked={state.policy.response_gate === "hold"} className={`switch ${state.policy.response_gate === "hold" ? "on" : ""}`} onClick={() => void changeGate("response_gate", state.policy.response_gate === "hold" ? "pass" : "hold")}><span /></button><strong>{state.policy.response_gate}</strong></label>
-        <div className="wire-note"><span className="wire-icon">⟷</span><span>wire authority: <strong>raw artifact</strong></span></div>
-      </section>
+    <div className={`app-shell theme-${theme}`}>
+      <WorkspaceTopbar
+        policy={state.policy}
+        exchangeCount={state.exchanges.length}
+        heldCount={heldCount}
+        loadedCount={loadedCount}
+        theme={theme}
+        onGateChange={(gate, value) => void changeGate(gate, value)}
+        onThemeToggle={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+      />
       {state.error && <div className="error-banner" role="alert"><strong>Workspace error</strong> {state.error}<button type="button" onClick={() => dispatch({ type: "clear_error" })}>Dismiss</button></div>}
-      <div className="workspace-grid">
-        <TrafficQueue exchanges={state.exchanges} selectedExchangeId={state.selectedExchangeId} onSelect={(exchangeId) => dispatch({ type: "select_exchange", exchangeId })} />
+      <div className={`workspace-grid ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+        <TrafficQueue
+          exchanges={state.exchanges}
+          selectedExchangeId={state.selectedExchangeId}
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          onSelect={(exchangeId) => dispatch({ type: "select_exchange", exchangeId })}
+        />
         <ExchangeDetail
           exchange={exchange}
           activeTab={state.activeTab}
@@ -192,7 +218,6 @@ export function App({ api }: AppProps) {
           commandBusy={commandBusy}
         />
       </div>
-      <footer className="footer-note"><span>Projection-only UI · local workspace API</span><span>{loadedCount} artifact{loadedCount === 1 ? "" : "s"} loaded locally</span></footer>
     </div>
   );
 }

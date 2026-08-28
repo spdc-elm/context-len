@@ -1,8 +1,10 @@
-import type { ExchangeSnapshot, Protocol } from "../contracts";
+import type { ExchangeSnapshot } from "../contracts";
 
 interface TrafficQueueProps {
   exchanges: ExchangeSnapshot[];
   selectedExchangeId?: string;
+  collapsed?: boolean;
+  onToggle?: () => void;
   onSelect: (exchangeId: string) => void;
 }
 
@@ -24,17 +26,19 @@ function requestPath(exchange: ExchangeSnapshot): string {
   return `${method} ${path}${raw_query ? `?${raw_query}` : ""}`;
 }
 
-export function TrafficQueue({ exchanges, selectedExchangeId, onSelect }: TrafficQueueProps) {
+export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false, onToggle, onSelect }: TrafficQueueProps) {
   return (
-    <aside className="traffic-panel" aria-label="Traffic queue">
+    <aside className={`traffic-panel ${collapsed ? "collapsed" : ""}`} aria-label="Traffic queue">
       <div className="panel-heading">
-        <div>
+        {!collapsed && <div>
           <p className="eyebrow">LIVE TRAFFIC</p>
           <h2>Exchange queue</h2>
-        </div>
+        </div>}
         <span className="count-badge" aria-label={`${exchanges.length} exchanges`}>{exchanges.length}</span>
+        <button type="button" className="collapse-button" aria-label={collapsed ? "Expand traffic" : "Collapse traffic"} onClick={onToggle}>{collapsed ? "›" : "‹"}</button>
       </div>
-      <p className="panel-note">Live local workspace · events stream in realtime; bodies load on demand</p>
+      {!collapsed && <>
+        <p className="panel-note">Live local workspace · events in realtime; bodies load on demand</p>
       <div className="traffic-list" role="listbox" aria-label="Exchanges">
         {exchanges.length === 0 ? (
           <div className="empty-state">Waiting for an exchange…</div>
@@ -59,7 +63,7 @@ export function TrafficQueue({ exchanges, selectedExchangeId, onSelect }: Traffi
             </div>
           </button>
         ))}
-      </div>
+      </div></>}
     </aside>
   );
 }
