@@ -30,6 +30,8 @@ Every command includes `{ exchange_id, base_revision }`; mutations additionally 
 
 Kinds include `exchange_created, request_held, upstream_started, response_held, updated, completed, failed, cancelled, dropped`. Large bodies never appear inline in snapshots/events.
 
+The additive `stream_event` kind carries one observed SSE record while a response body is still streaming: `stream { ordinal, name, sse_id, data, complete, byte_start, byte_end }`. Stream events never commit a revision (revision stays 0), are deduplicated by ordinal on the client, and are display-only copies — the response artifact remains the only wire authority. `byte_start`/`byte_end` locate the record's raw bytes inside the response artifact. Non-event-stream responses emit no stream events.
+
 ## Transport invariant
 
 The proxy forwards artifact readers directly in bypass/release-unchanged paths. It never JSON decodes/re-encodes or aggregates/re-generates SSE on those paths. Inspector output is projection-only and cannot become transport input.

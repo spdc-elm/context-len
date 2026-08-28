@@ -193,10 +193,10 @@ describe("ChatTemplateView", () => {
     expect(block?.textContent).toContain("line1\nline2");
   });
 
-  it("shows the SSE phase placeholder for event-stream artifacts", () => {
+  it("renders SSE artifacts as typed live blocks via the stream reducer", () => {
     const rendered = renderView({
       protocol: "chat_completions",
-      body: "event: message\ndata: {\"delta\":\"hi\"}\n\n",
+      body: "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi \"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"there\"}}]}\n\ndata: [DONE]\n\n",
       artifact: {
         artifact_id: "a",
         stage: "response.upstream",
@@ -209,6 +209,37 @@ describe("ChatTemplateView", () => {
         storage_ref: "mem://a",
       },
     });
-    expect(rendered.textContent).toContain("SSE response");
+    expect(rendered.textContent).toContain("response · completed · [DONE] · 3 events");
+    expect(rendered.textContent).toContain("hi there");
+    expect(rendered.textContent).not.toContain("SSE phase");
+  });
+
+  it("appends live stream blocks after the request context while streaming", () => {
+    const rendered = renderView({
+      protocol: "chat_completions",
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "hi" }] }),
+      live: {
+        protocol: "chat_completions",
+        status: "streaming",
+        statusDetail: undefined,
+        nextOrdinal: 1,
+        blocks: [
+          {
+            id: "live:choice:0",
+            kind: "assistant",
+            role: "assistant",
+            text: "growing answer",
+            content: [],
+            sourcePointer: "/events/0",
+          },
+        ],
+        events: [{ ordinal: 0, data: "{\"delta\":\"growing\"}" }],
+        eventCount: 1,
+      },
+    });
+    expect(rendered.querySelector(".chat-template-view")?.getAttribute("data-live")).toBe("true");
+    expect(rendered.querySelector(".chat-live-chip")?.textContent).toContain("response · streaming · 1 events");
+    expect(rendered.textContent).toContain("hi");
+    expect(rendered.textContent).toContain("growing answer");
   });
 });

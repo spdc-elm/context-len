@@ -204,6 +204,7 @@ export function App({ api }: AppProps) {
         />
         <ExchangeDetail
           exchange={exchange}
+          liveStream={exchange ? state.streams[exchange.exchange_id] : undefined}
           activeTab={state.activeTab}
           onTabChange={(tab: DetailTab) => dispatch({ type: "set_tab", tab })}
           loadedBodies={state.loadedBodies}

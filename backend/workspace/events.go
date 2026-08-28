@@ -102,6 +102,10 @@ func cloneEvent(in exchange.Event) exchange.Event {
 		out.SnapshotDelta.Response = &resp
 	}
 	out.SnapshotDelta.Warnings = append([]string(nil), in.SnapshotDelta.Warnings...)
+	if in.Stream != nil {
+		stream := *in.Stream
+		out.Stream = &stream
+	}
 	return out
 }
 func normalizeEvent(event exchange.Event, sequence uint64) exchange.Event {

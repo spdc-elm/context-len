@@ -2,7 +2,7 @@
 
 `context-lens` 是一个独立的 LLM 请求观察与拦截工作台。它以 HTTP 应用层 wire 数据为权威来源，把 Responses、Chat Completions、Anthropic Messages 请求和响应以原协议转发，同时提供人类可读的旁路解析视图，以及可审计的人工放行、人工回复和响应编辑。
 
-当前状态：透明代理核心 MVP 已完成并归档验收；Chat Template MVP 处于 PREPARE，计划分 Raw + Chat Template 联合验收、SSE 后段验收两个阶段。最新任务图和设计规范见 [`team/BOARD.md`](team/BOARD.md) 与 [`docs/chat-template-spec.md`](docs/chat-template-spec.md)。
+当前状态：透明代理核心 MVP 已完成并归档验收；Chat Template MVP 的 Raw + Chat Template（含宽屏分栏）与 SSE 实时观察（typed stream_event、live Chat Template、SSE tab 实时事件）均已实现，等待 leader 分阶段验收。最新任务图和设计规范见 [`team/BOARD.md`](team/BOARD.md) 与 [`docs/chat-template-spec.md`](docs/chat-template-spec.md)。
 
 ## 必读文档
 

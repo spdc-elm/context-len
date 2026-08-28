@@ -87,43 +87,8 @@ func (p *sseParser) parse() {
 				valueBytes = valueBytes[1:]
 			}
 		}
-		name := string(nameBytes)
-		value := string(valueBytes)
-		field := SSEField{Name: name, Value: value, Raw: lineRaw, Span: ByteSpan{lineStart, next}}
-		p.current.fields = append(p.current.fields, field)
-		switch name {
-		case "event":
-			p.current.name = value
-			p.current.hasEvent = true
-		case "data":
-			p.current.data.WriteString(value)
-			p.current.data.WriteByte('\n')
-			p.current.dataLines = append(p.current.dataLines, value)
-			p.current.hasData = true
-		case "id":
-			// The SSE algorithm ignores id values containing NUL.  Retaining the
-			// field and warning is more useful for inspection than silently
-			// losing its raw bytes.
-			if strings.IndexByte(value, 0) >= 0 {
-				p.result.Warnings = append(p.result.Warnings, warning("nul_in_id", "SSE id field contains NUL and is not a valid event id", "/events", field.Span, false))
-			} else {
-				p.current.id = value
-				p.current.hasID = true
-			}
-		case "retry":
-			p.current.hasRetry = true
-			n, err := parseRetry(value)
-			if err != nil {
-				p.current.unknown = append(p.current.unknown, field)
-				p.result.Warnings = append(p.result.Warnings, warning("invalid_retry", "SSE retry field must be a non-negative decimal integer", "/events", field.Span, false))
-			} else {
-				p.current.retry = &n
-			}
-		default:
-			// Unknown SSE field names have no forwarding effect, but retaining
-			// them is important when explaining a provider extension.
-			p.current.unknown = append(p.current.unknown, field)
-		}
+		field := SSEField{Name: string(nameBytes), Value: string(valueBytes), Raw: lineRaw, Span: ByteSpan{lineStart, next}}
+		p.current.applyField(field, p.result)
 		if !utf8.Valid(line) {
 			p.result.Warnings = append(p.result.Warnings, warning("invalid_utf8", "SSE line is not valid UTF-8; raw bytes are retained", "/events", field.Span, false))
 		}
@@ -133,6 +98,48 @@ func (p *sseParser) parse() {
 		// SSE only dispatches an event at a blank line.  For observation we still
 		// expose an incomplete final event, with an explicit warning and status.
 		p.dispatch(len(p.source), false)
+	}
+}
+
+// applyField folds one parsed SSE field line into the record under
+// construction.  It is shared by the whole-buffer parser and the incremental
+// StreamScanner so both observe identical field semantics.  Parser warnings
+// are appended to result; the scanner passes a scratch value it discards
+// because the complete-artifact inspection reports them once the body exists.
+func (b *sseEventBuilder) applyField(field SSEField, result *SSEInspection) {
+	b.fields = append(b.fields, field)
+	switch field.Name {
+	case "event":
+		b.name = field.Value
+		b.hasEvent = true
+	case "data":
+		b.data.WriteString(field.Value)
+		b.data.WriteByte('\n')
+		b.dataLines = append(b.dataLines, field.Value)
+		b.hasData = true
+	case "id":
+		// The SSE algorithm ignores id values containing NUL.  Retaining the
+		// field and warning is more useful for inspection than silently
+		// losing its raw bytes.
+		if strings.IndexByte(field.Value, 0) >= 0 {
+			result.Warnings = append(result.Warnings, warning("nul_in_id", "SSE id field contains NUL and is not a valid event id", "/events", field.Span, false))
+		} else {
+			b.id = field.Value
+			b.hasID = true
+		}
+	case "retry":
+		b.hasRetry = true
+		n, err := parseRetry(field.Value)
+		if err != nil {
+			b.unknown = append(b.unknown, field)
+			result.Warnings = append(result.Warnings, warning("invalid_retry", "SSE retry field must be a non-negative decimal integer", "/events", field.Span, false))
+		} else {
+			b.retry = &n
+		}
+	default:
+		// Unknown SSE field names have no forwarding effect, but retaining
+		// them is important when explaining a provider extension.
+		b.unknown = append(b.unknown, field)
 	}
 }
 

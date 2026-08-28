@@ -5,6 +5,7 @@ import {
   type GateMode,
   type WorkspacePolicy,
 } from "./contracts";
+import { applyStreamRecord, applyStreamTerminus, initialLiveStream, type LiveStreamState } from "./streamIr";
 
 export type DetailTab = "raw" | "chat_template" | "sse";
 
@@ -28,6 +29,7 @@ export interface WorkspaceState {
   bodyLoading: boolean;
   loadedBodies: Record<string, LoadedArtifact>;
   search: string;
+  streams: Record<string, LiveStreamState>;
 }
 
 export type WorkspaceAction =
@@ -55,6 +57,7 @@ export const initialWorkspaceState: WorkspaceState = {
   bodyLoading: false,
   loadedBodies: {},
   search: "",
+  streams: {},
 };
 
 function revisionValue(exchange: ExchangeSnapshot): number {
@@ -131,6 +134,19 @@ function appendEventArtifacts(snapshot: ExchangeSnapshot, refs: ExchangeEvent["a
   };
 }
 
+/** Exchange lifecycle transitions resolve an open live stream: completed,
+ *  failed, cancelled, and dropped are observable terminal stream states even
+ *  when the SSE record flow never carried a protocol terminator. */
+function observeStreamTerminus(state: WorkspaceState, event: ExchangeEvent): WorkspaceState {
+  const stream = state.streams[event.exchange_id];
+  if (!stream) return state;
+  const kind = String(event.kind);
+  const status = kind === "completed" ? "completed" : kind === "failed" ? "failed" : "cancelled";
+  const next = applyStreamTerminus(stream, status, kind);
+  if (next === stream) return state;
+  return { ...state, streams: { ...state.streams, [event.exchange_id]: next } };
+}
+
 function upsertExchange(state: WorkspaceState, exchange: ExchangeSnapshot, revision: number): WorkspaceState {
   const found = state.exchanges.some((item) => item.exchange_id === exchange.exchange_id);
   const exchanges = found
@@ -177,6 +193,17 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, policy: action.policy };
     case "event_received": {
       const event = action.event;
+      if (event.kind === "stream_event" && event.stream) {
+        // A stream observation never commits a revision; it is deduplicated
+        // by ordinal inside the live reducer so broker replay and
+        // Last-Event-ID reconnects stay idempotent.
+        const current = state.exchanges.find((item) => item.exchange_id === event.exchange_id);
+        if (!current) return state; // exchange_created always precedes records
+        const existing = state.streams[event.exchange_id] ?? initialLiveStream(current.protocol);
+        const next = applyStreamRecord(existing, event.stream);
+        if (next === existing) return state;
+        return { ...state, streams: { ...state.streams, [event.exchange_id]: next } };
+      }
       const current = state.exchanges.find((item) => item.exchange_id === event.exchange_id);
       if (!current) {
         // `exchange_created` events may carry a full snapshot as an additive
@@ -187,7 +214,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       }
       if (event.revision <= revisionOf(state, event.exchange_id)) return state;
       const merged = appendEventArtifacts(mergeSnapshot(current, event.snapshot_delta), event.artifact_refs);
-      return upsertExchange(state, { ...merged, revision: event.revision }, event.revision);
+      const upserted = upsertExchange(state, { ...merged, revision: event.revision }, event.revision);
+      return observeStreamTerminus(upserted, event);
     }
     case "command_succeeded": {
       const result = action.result;

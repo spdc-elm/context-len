@@ -7,6 +7,8 @@ import type {
   Protocol,
 } from "../contracts";
 import { formatWorkspaceTime } from "../time";
+import { parseSseRecords } from "../streamIr";
+import type { LiveStreamState } from "../streamIr";
 import type { DetailTab, LoadedArtifact } from "../workspaceState";
 import RawJsonTree from "./RawJsonTree";
 import ChatTemplateView from "./ChatTemplateView";
@@ -31,6 +33,8 @@ export interface CommandIntent {
 
 interface ExchangeDetailProps {
   exchange?: ExchangeSnapshot;
+  /** Live projection of the response SSE stream while it is flowing. */
+  liveStream?: LiveStreamState;
   activeTab: DetailTab;
   onTabChange: (tab: DetailTab) => void;
   loadedBodies: Record<string, LoadedArtifact>;
@@ -162,37 +166,16 @@ function bodyFor(artifact: ArtifactRef | undefined, loadedBodies: Record<string,
 }
 
 function parseSse(body: string): NonNullable<InspectionProjection["stream_events"]> {
-  const events: NonNullable<InspectionProjection["stream_events"]> = [];
-  let eventName: string | undefined;
-  let eventId: string | undefined;
-  let retry: number | undefined;
-  let data: string[] = [];
-  const flush = () => {
-    if (data.length === 0 && !eventName && !eventId && retry === undefined) return;
-    events.push({ event: eventName, id: eventId, retry, data: data.join("\n"), sequence: events.length });
-    eventName = undefined;
-    eventId = undefined;
-    retry = undefined;
-    data = [];
-  };
-  for (const line of body.split(/\r?\n/)) {
-    if (line === "") {
-      flush();
-      continue;
-    }
-    if (line.startsWith(":")) continue;
-    const separator = line.indexOf(":");
-    const field = separator < 0 ? line : line.slice(0, separator);
-    const value = separator < 0 ? "" : line.slice(separator + 1).replace(/^ /, "");
-    if (field === "event") eventName = value;
-    else if (field === "id") eventId = value;
-    else if (field === "retry") {
-      const parsed = Number(value);
-      if (Number.isFinite(parsed)) retry = parsed;
-    } else if (field === "data") data.push(value);
-  }
-  flush();
-  return events;
+  // One SSE line parser for the whole shell: the live stream module owns the
+  // record rules so the SSE tab and the Chat Template delta projection can
+  // never disagree about where records begin and end.
+  return parseSseRecords(body).map((record) => ({
+    event: record.name,
+    id: record.sse_id,
+    retry: record.retry,
+    data: record.data ?? "",
+    sequence: record.ordinal,
+  }));
 }
 
 function projectionFromBody(body: string, artifact: ArtifactRef | undefined, protocol: string): InspectionProjection {
@@ -239,28 +222,32 @@ function projectionFromBody(body: string, artifact: ArtifactRef | undefined, pro
   }
 }
 
-function ProjectionBody({ exchange, tab, body, artifact }: { exchange: ExchangeSnapshot; tab: DetailTab; body?: string; artifact?: ArtifactRef }) {
+function ProjectionBody({ exchange, tab, body, artifact, live }: { exchange: ExchangeSnapshot; tab: DetailTab; body?: string; artifact?: ArtifactRef; live?: LiveStreamState }) {
   const stored = tab === "sse" ? exchange.response.projection : exchange.request.projection ?? exchange.response.projection;
   const projection = body !== undefined && (!stored || stored.parse_status === "not_attempted" || (tab === "sse" && !stored.stream_events?.length))
     ? projectionFromBody(body, artifact, String(exchange.protocol))
     : stored;
-  if (!projection) return <div className="body-placeholder">Load an artifact to calculate a display-only projection.</div>;
-  const stream = projection.stream_events;
+  const stream = projection?.stream_events;
+  const showLive = live !== undefined && live.eventCount > 0 && (!stream || stream.length === 0);
+  if (!projection && !showLive) return <div className="body-placeholder">Load an artifact to calculate a display-only projection.</div>;
   return (
     <div className="projection-view">
-      <div className="projection-status"><span className={`status-dot status-${projection.parse_status}`} /> parser: <strong>{projection.parse_status}</strong>{projection.protocol_hint && <span> · {projection.protocol_hint}</span>}</div>
-      {projection.warnings.length > 0 && <div className="warning-box">{projection.warnings.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}</div>}
+      {projection && <div className="projection-status"><span className={`status-dot status-${projection.parse_status}`} /> parser: <strong>{projection.parse_status}</strong>{projection.protocol_hint && <span> · {projection.protocol_hint}</span>}</div>}
+      {showLive && <div className="projection-status"><span className={`status-dot status-${live.status === "streaming" ? "parsed" : live.status === "failed" ? "invalid" : "parsed"}`} /> live stream: <strong>{live.status}</strong>{live.statusDetail && <span> · {live.statusDetail}</span>} · {live.eventCount} events</div>}
+      {projection && projection.warnings.length > 0 && <div className="warning-box">{projection.warnings.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}</div>}
       {tab === "sse" && stream && stream.length > 0 ? (
         <ol className="event-list">{stream.map((event, index) => <li key={`${event.event ?? "data"}-${event.id ?? index}`}><code>{event.event ?? "data"}</code>{event.id && <small> id={event.id}</small>}<pre>{event.data}</pre></li>)}</ol>
+      ) : showLive ? (
+        <ol className="event-list live-event-list">{live.events.map((event) => <li key={event.ordinal}><code>{event.name ?? "data"}</code><small> #{event.ordinal}</small><pre>{event.data}</pre></li>)}</ol>
       ) : (
         <pre className="code-view">{JSON.stringify({
-          sections: projection.sections,
-          messages: projection.messages,
-          input_items: projection.input_items,
-          content_blocks: projection.content_blocks,
-          tools: projection.tools,
-          response_items: projection.response_items,
-          unknown_nodes: projection.unknown_nodes,
+          sections: projection?.sections,
+          messages: projection?.messages,
+          input_items: projection?.input_items,
+          content_blocks: projection?.content_blocks,
+          tools: projection?.tools,
+          response_items: projection?.response_items,
+          unknown_nodes: projection?.unknown_nodes,
         }, null, 2)}</pre>
       )}
     </div>
@@ -323,6 +310,7 @@ function MutationEditor({ mode, value, onChange, onSubmit, onCancel, busy }: { m
 
 export function ExchangeDetail({
   exchange,
+  liveStream,
   activeTab,
   onTabChange,
   loadedBodies,
@@ -411,6 +399,17 @@ export function ExchangeDetail({
   const artifact = artifactForTab(exchange, activeTab, selectedArtifactId);
   const body = bodyFor(artifact, loadedBodies);
 
+  // When a live stream finishes, the response artifact is the authority.
+  // Switch to it once (unless the operator already picked an artifact) so
+  // the completed view replaces the transient live projection seamlessly.
+  const liveDone = liveStream !== undefined && liveStream.status !== "streaming";
+  useEffect(() => {
+    if (!exchange || !liveDone || selectedArtifactId) return;
+    const refs = exchange.response.artifact_refs ?? [];
+    const target = refs.find((ref) => ref.content_type.includes("event-stream")) ?? refs.find((ref) => ref.complete);
+    if (target) setSelectedArtifactId(target.artifact_id);
+  }, [exchange, liveDone, selectedArtifactId]);
+
   useEffect(() => {
     if (artifact && !loadedBodies[artifact.artifact_id] && !bodyLoading) onLoadBody(artifact);
   }, [artifact?.artifact_id, bodyLoading, loadedBodies, onLoadBody]);
@@ -491,12 +490,12 @@ export function ExchangeDetail({
             </div>
             <div className="pane-divider" role="separator" aria-orientation="vertical" aria-label="Resize panes" title="Drag to resize" onMouseDown={startPaneResize} />
             <div className="viewer-pane">
-              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} />
+              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} />
             </div>
           </>) : (<>
             {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
-            {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} />}
-            {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} />}
+            {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} />}
+            {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} live={liveStream} />}
           </>)}
         </div>
       </section>

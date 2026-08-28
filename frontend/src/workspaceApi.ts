@@ -413,7 +413,7 @@ export class LocalWorkspaceApi implements WorkspaceApi {
     // The backend emits named SSE events (`event: completed`, etc.). Native
     // EventSource does not route those through `onmessage`, so subscribe to
     // every frozen event kind as well as the default message channel.
-    const eventKinds = ["exchange_created", "request_held", "upstream_started", "response_held", "updated", "completed", "failed", "cancelled", "dropped"];
+    const eventKinds = ["exchange_created", "request_held", "upstream_started", "response_held", "updated", "completed", "failed", "cancelled", "dropped", "stream_event"];
     for (const kind of eventKinds) source.addEventListener?.(kind, handleMessage);
     source.onerror = () => {
       try { source.close(); } catch { /* noop */ }

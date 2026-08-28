@@ -127,10 +127,16 @@ const (
 	EventFailed          EventKind = "failed"
 	EventCancelled       EventKind = "cancelled"
 	EventDropped         EventKind = "dropped"
+	// EventStreamEvent is an additive observation kind: while a response body
+	// streams, each client-visible SSE record reaches workspace subscribers as
+	// its own event.  Stream events carry no revision and never mutate the
+	// exchange; they exist only so realtime UI can project the stream.
+	EventStreamEvent EventKind = "stream_event"
 )
 
 // Event is emitted after each revision is committed.  ArtifactRefs carry
 // metadata for newly-created refs; no body bytes are ever placed inline.
+// Stream carries one observed SSE record when Kind is EventStreamEvent.
 type Event struct {
 	EventID       string             `json:"event_id"`
 	ExchangeID    string             `json:"exchange_id"`
@@ -139,6 +145,23 @@ type Event struct {
 	SnapshotDelta SnapshotDelta      `json:"snapshot_delta"`
 	ArtifactRefs  []wire.ArtifactRef `json:"artifact_refs"`
 	CreatedAt     time.Time          `json:"created_at"`
+	Stream        *StreamEvent       `json:"stream,omitempty"`
+}
+
+// StreamEvent retains one observed SSE record from a response body while it
+// is still streaming.  It is a display-only projection of a copy of the wire
+// bytes: the artifact remains the only wire authority, and no field here is
+// ever used as transport input.  Ordinal is the record's index within the
+// stream; ByteStart/ByteEnd locate the record's raw bytes in the response
+// artifact.
+type StreamEvent struct {
+	Ordinal   int    `json:"ordinal"`
+	Name      string `json:"name,omitempty"`
+	ID        string `json:"sse_id,omitempty"`
+	Data      string `json:"data,omitempty"`
+	Complete  bool   `json:"complete,omitempty"`
+	ByteStart int64  `json:"byte_start,omitempty"`
+	ByteEnd   int64  `json:"byte_end,omitempty"`
 }
 
 // ExchangeEvent is an explicit alias matching the browser DTO terminology.

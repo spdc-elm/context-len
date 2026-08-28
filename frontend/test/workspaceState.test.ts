@@ -109,4 +109,43 @@ describe("workspace reducer", () => {
     expect(next.search).toBe("");
     expect(next.loadedBodies).toEqual({});
   });
+
+  it("applies stream events to a live stream keyed by exchange", () => {
+    const exchange = snapshot();
+    const loaded = workspaceReducer(initialWorkspaceState, { type: "load_succeeded", exchanges: [exchange], policy: exchange.policy });
+    const streamEvent = (ordinal: number, data: string): ExchangeEvent => ({
+      event_id: `${exchange.exchange_id}:stream:${ordinal}`,
+      exchange_id: exchange.exchange_id,
+      revision: 0,
+      kind: "stream_event",
+      created_at: "2026-01-01T00:00:00Z",
+      artifact_refs: [],
+      snapshot_delta: { exchange_id: exchange.exchange_id },
+      stream: { ordinal, data, complete: true },
+    });
+    let state = workspaceReducer(loaded, { type: "event_received", event: streamEvent(0, JSON.stringify({ type: "response.output_text.delta", item_id: "msg_1", delta: "hi" })) });
+    state = workspaceReducer(state, { type: "event_received", event: streamEvent(1, JSON.stringify({ type: "response.output_text.delta", item_id: "msg_1", delta: " there" })) });
+    const stream = state.streams[exchange.exchange_id];
+    expect(stream?.blocks.find((block) => block.id === "live:msg_1")?.text).toBe("hi there");
+    // Replay (same ordinal) is idempotent.
+    state = workspaceReducer(state, { type: "event_received", event: streamEvent(1, JSON.stringify({ choices: [{ index: 0, delta: { content: " there" } }] })) });
+    expect(state.streams[exchange.exchange_id]?.eventCount).toBe(2);
+    // Exchange lifecycle closes the stream.
+    const completed: ExchangeEvent = {
+      event_id: "e2", exchange_id: exchange.exchange_id, revision: 3, kind: "completed", created_at: "2026-01-01T00:00:01Z",
+      artifact_refs: [], snapshot_delta: { exchange_id: exchange.exchange_id, state: "completed", updated_at: "2026-01-01T00:00:01Z" },
+    };
+    state = workspaceReducer(state, { type: "event_received", event: completed });
+    expect(state.streams[exchange.exchange_id]?.status).toBe("completed");
+    expect(state.streams[exchange.exchange_id]?.blocks.find((block) => block.id === "live:msg_1")?.text).toBe("hi there");
+  });
+
+  it("ignores stream events for unknown exchanges", () => {
+    const event: ExchangeEvent = {
+      event_id: "s", exchange_id: "ghost", revision: 0, kind: "stream_event", created_at: "2026-01-01T00:00:00Z",
+      artifact_refs: [], snapshot_delta: { exchange_id: "ghost" }, stream: { ordinal: 0, data: "{}", complete: true },
+    };
+    const state = workspaceReducer(initialWorkspaceState, { type: "event_received", event });
+    expect(state.streams["ghost"]).toBeUndefined();
+  });
 });

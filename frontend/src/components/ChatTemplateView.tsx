@@ -6,14 +6,19 @@ import {
   QWEN_DEFAULT_SYSTEM,
   QWEN_TOOL_CALL_INSTRUCTION,
   qwenBlockRole,
+  renderQwenBlock,
   renderQwenBlocks,
+  type RenderedContextBlock,
 } from "../qwenChatTemplate";
+import { buildLiveStream, parseSseRecords, type LiveStreamState, type StreamStatus } from "../streamIr";
 import { loadQwenScopeRegistry, scopeByName } from "../templateScopes";
 
 interface ChatTemplateViewProps {
   protocol: string;
   body?: string;
   artifact?: ArtifactRef;
+  /** Live response stream while the SSE body is still flowing. */
+  live?: LiveStreamState;
 }
 
 type Segment =
@@ -396,13 +401,40 @@ function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment;
   );
 }
 
-export function ChatTemplateView({ protocol, body, artifact }: ChatTemplateViewProps) {
+function streamChip(status: StreamStatus, detail: string | undefined, eventCount: number) {
+  return (
+    <span className={`chat-live-chip chat-live-${status}`}>
+      {status === "streaming" ? <i className="chat-live-dot" aria-hidden="true" /> : null}
+      response · {status}
+      {detail ? ` · ${detail}` : ""} · {eventCount} events
+    </span>
+  );
+}
+
+export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplateViewProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const document = useMemo(() => normalizeContext(protocol, body ?? ""), [protocol, body]);
-  const blocks = useMemo(() => renderQwenBlocks(document), [document]);
-  const segments = useMemo(() => blocks.map(({ block }, index) => blockToSegment(block, index)), [blocks]);
   const isSse =
     artifact?.content_type.includes("event-stream") || /^\s*(?:event|data|id|retry):/m.test(body ?? "");
+  // A complete SSE artifact folds through the same live reducer that powers
+  // realtime updates, so the finished view and the live view agree by
+  // construction instead of by duplicated logic.
+  const streamFromBody = useMemo(
+    () => (isSse && body !== undefined ? buildLiveStream(protocol, parseSseRecords(body)) : undefined),
+    [isSse, body, protocol],
+  );
+  const activeStream = streamFromBody ?? live;
+  const blocks = useMemo<RenderedContextBlock[]>(() => {
+    if (streamFromBody) {
+      return renderQwenBlocks({ ...document, blocks: streamFromBody.blocks });
+    }
+    const base = renderQwenBlocks(document);
+    if (!live || live.blocks.length === 0) return base;
+    // The live response appends to the request context: the operator watches
+    // the assistant's reply grow at the end of the context the model saw.
+    return [...base, ...live.blocks.map((block) => ({ block, text: renderQwenBlock(block) }))];
+  }, [document, live, streamFromBody]);
+  const segments = useMemo(() => blocks.map(({ block }, index) => blockToSegment(block, index)), [blocks]);
 
   useEffect(() => {
     setCollapsed({});
@@ -413,30 +445,28 @@ export function ChatTemplateView({ protocol, body, artifact }: ChatTemplateViewP
       <div className="body-placeholder">Load an artifact to render the derived Qwen ChatML context.</div>
     );
   }
-  if (isSse) {
-    return (
-      <section className="chat-template-view" aria-label={QWEN_CHAT_TEMPLATE_NAME} data-chat-template="qwen-chatml">
-        <div className="chat-template-heading">
-          <strong>{QWEN_CHAT_TEMPLATE_NAME}</strong>
-          <span>SSE response · open SSE for raw events</span>
-        </div>
-        <div className="body-placeholder">
-          This response artifact is an SSE stream. Its typed Chat Template delta projection is part of the SSE phase.
-        </div>
-      </section>
-    );
-  }
 
   const toggle = (id: string, defaultOpen: boolean) =>
     setCollapsed((current) => ({ ...current, [id]: !(current[id] ?? defaultOpen) }));
 
+  const streaming = activeStream?.status === "streaming";
+
   return (
-    <section className="chat-template-view" aria-label={QWEN_CHAT_TEMPLATE_NAME} data-chat-template="qwen-chatml">
+    <section
+      className="chat-template-view"
+      aria-label={QWEN_CHAT_TEMPLATE_NAME}
+      data-chat-template="qwen-chatml"
+      data-live={streaming ? "true" : undefined}
+    >
       <div className="chat-template-heading">
         <strong>{QWEN_CHAT_TEMPLATE_NAME}</strong>
-        <span>{document.blocks.length} blocks</span>
+        {activeStream && activeStream.eventCount > 0 ? (
+          streamChip(activeStream.status, activeStream.statusDetail, activeStream.eventCount)
+        ) : (
+          <span>{document.blocks.length} blocks</span>
+        )}
       </div>
-      {document.warnings.length > 0 && (
+      {document.warnings.length > 0 && !isSse && (
         <div className="warning-box">
           {document.warnings.map((warning) => (
             <p key={warning}>{warning}</p>

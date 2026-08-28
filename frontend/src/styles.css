@@ -364,3 +364,33 @@ body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
   .raw-json-tree, .chat-template-view { min-width: 0; padding-left: 10px; padding-right: 10px; }
   .raw-json-node-pointer { display: none; }
 }
+
+/* Live stream status chip: shows the response stream state while SSE records
+   flow (or once a complete stream artifact is folded through the reducer). */
+.chat-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent-strong) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 22%, transparent);
+}
+.chat-live-chip.chat-live-completed { color: #1a7f4b; background: rgba(26, 127, 75, .08); border-color: rgba(26, 127, 75, .25); }
+.chat-live-chip.chat-live-failed { color: #b3261e; background: rgba(179, 38, 30, .08); border-color: rgba(179, 38, 30, .3); }
+.chat-live-chip.chat-live-cancelled { color: var(--muted); background: transparent; border-color: var(--line); }
+.chat-live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-strong);
+  animation: chat-live-pulse 1.2s ease-in-out infinite;
+}
+@keyframes chat-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .35; transform: scale(.75); }
+}
+[data-theme="dark"] .chat-live-chip.chat-live-completed { color: #5fd39a; }
+[data-theme="dark"] .chat-live-chip.chat-live-failed { color: #ff8a80; }
+.live-event-list li code { color: var(--accent-strong); }

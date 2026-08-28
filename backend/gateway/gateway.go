@@ -425,6 +425,10 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 	if resp.Body == nil {
 		resp.Body = http.NoBody
 	}
+	// Observation tap for streaming responses: a copy of every chunk is fed
+	// to the SSE scanner so workspace subscribers see typed stream events in
+	// real time.  The tap never touches the bytes the transport copies onward.
+	resp.Body = g.attachStreamTap(req.ExchangeID, resp.Body, resp.Header.Get("Content-Type"))
 	defer resp.Body.Close()
 
 	if direct {

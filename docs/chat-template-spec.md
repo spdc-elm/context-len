@@ -170,6 +170,13 @@ provider_passthrough
 
 前端通过 reducer 消费 delta；不得由组件自行拼接三种协议的 SSE。
 
+实现形态（Phase 2 已定）：
+
+- 后端 `inspection.StreamScanner` 在 gateway 的响应读取路径上增量解析 SSE（仅观察字节副本，不改变传输字节）；每个 client-visible 记录作为 additive 的 `stream_event` workspace 事件广播（见 `docs/runtime-contract.md` Events 节）。
+- 前端 `streamIr.ts` 是唯一的三协议 → typed IR delta 归一层：Responses（item/output_text/reasoning_summary/function_call_*）、Chat Completions（choices/delta/tool_calls、`[DONE]` 终止）、Anthropic（content_block_*、message_stop/error）各自解析，未知事件保留为 passthrough block。
+- 同一 reducer 同时服务两条路径：流式 live 视图（workspace `stream_event` 折叠）与完整 response artifact 的 ChatML 渲染（`parseSseRecords` 后 `buildLiveStream`），两者按构造保持一致。
+- live 状态由 ordinal 去重（broker 回放与 Last-Event-ID 重连幂等）；exchange 终态（completed/failed/cancelled/dropped）会把未终结的流置为对应终态。流结束后前端自动选中 response artifact，由 artifact（唯一 wire authority）接管展示。
+
 ## 7. Template extensibility
 
 本周期只交付 Qwen ChatML 内置 renderer。接口必须允许后续增加：

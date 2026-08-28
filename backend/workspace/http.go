@@ -939,6 +939,10 @@ func redactEvent(in exchange.Event) exchange.Event {
 	out := in
 	out.SnapshotDelta = redactDelta(in.SnapshotDelta)
 	out.ArtifactRefs = append([]wire.ArtifactRef(nil), in.ArtifactRefs...)
+	if in.Stream != nil {
+		stream := *in.Stream
+		out.Stream = &stream
+	}
 	return out
 }
 

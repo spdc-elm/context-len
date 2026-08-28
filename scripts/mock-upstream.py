@@ -7,9 +7,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 import json
+import os
 import time
 
 ROOT = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
+
+# Per-line SSE delay is configurable so a browser can observe the live stream
+# projection while records are still flowing (default keeps tests quick).
+SSE_DELAY = float(os.environ.get("MOCK_SSE_DELAY_MS", "30")) / 1000.0
 CASES = {
     "/v1/responses": (
         "responses/json/response.json",
@@ -49,7 +54,7 @@ class Handler(BaseHTTPRequestHandler):
             for line in body.splitlines(keepends=True):
                 self.wfile.write(line)
                 self.wfile.flush()
-                time.sleep(0.03)
+                time.sleep(SSE_DELAY)
         else:
             self.wfile.write(body)
             self.wfile.flush()

@@ -100,10 +100,10 @@ func TestProtocolSSEFixturesPreserveGrammarAndTermination(t *testing.T) {
 	}
 	chatBody := fixture(t, "chat_completions", "sse", "response.sse")
 	chat := InspectChatCompletionsSSE(chatBody)
-	if !chat.Valid || !chat.Validation.Valid || len(chat.Events) != 7 || !chat.SawDoneSentinel || !chat.ProtocolComplete {
+	if !chat.Valid || !chat.Validation.Valid || len(chat.Events) != 8 || !chat.SawDoneSentinel || !chat.ProtocolComplete {
 		t.Fatalf("chat SSE projection: valid=%v validation=%v events=%d done=%v complete=%v errors=%v", chat.Valid, chat.Validation.Valid, len(chat.Events), chat.SawDoneSentinel, chat.ProtocolComplete, chat.Validation.ErrorMessages())
 	}
-	if len(chat.UnknownNodes) != 2 || len(chat.Events[2].UnknownNodes) != 1 || len(chat.Events[5].UnknownNodes) != 1 {
+	if len(chat.UnknownNodes) != 2 || len(chat.Events[2].UnknownNodes) != 1 || len(chat.Events[6].UnknownNodes) != 1 {
 		t.Fatalf("chat SSE unknown nodes: total=%d event2=%d event5=%d", len(chat.UnknownNodes), len(chat.Events[2].UnknownNodes), len(chat.Events[5].UnknownNodes))
 	}
 	anthropicBody := fixture(t, "anthropic_messages", "sse", "response.sse")

@@ -65,7 +65,7 @@ var fixtureCases = []fixtureCase{
 		requestFile:  "chat_completions/sse/request.json",
 		responseFile: "chat_completions/sse/response.sse",
 		requestHash:  "98fa81c9368ffc3d10010adec13a7958f094035772a674ce4e5a50e93f3c7938",
-		responseHash: "5d54988a809008159a9d4b064bfc6dcd56cac01e1db826e0d1c9166ef55b0d77",
+		responseHash: "4735981ae8fcc3ca0933cdb9e53be0e8e0c3ab8d3ecfad7ac6a7d6a2782953ca",
 		contentType:  "text/event-stream; charset=utf-8",
 	},
 	{

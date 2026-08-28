@@ -48,7 +48,7 @@ except Exception:
 PY
 )"
   if [[ "$CONFIG_BASE_URL" == "http://127.0.0.1:19091" ]]; then
-    python3 -u "$ROOT_DIR/scripts/mock-upstream.py" >"$RUN_DIR/mock.log" 2>&1 &
+    MOCK_SSE_DELAY_MS="${MOCK_SSE_DELAY_MS:-30}" python3 -u "$ROOT_DIR/scripts/mock-upstream.py" >"$RUN_DIR/mock.log" 2>&1 &
     MOCK_PID=$!
   else
     echo "Skipping bundled mock: config base_url is not the local fixture upstream."

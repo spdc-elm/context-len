@@ -126,7 +126,20 @@ export type ExchangeEventKind =
   | "failed"
   | "cancelled"
   | "dropped"
+  | "stream_event"
   | (string & {});
+
+/** One observed SSE record while a response body streams.  Display-only
+ *  projection: the artifact bytes remain the only wire authority. */
+export interface StreamEventRecord {
+  ordinal: number;
+  name?: string;
+  sse_id?: string;
+  data?: string;
+  complete?: boolean;
+  byte_start?: number;
+  byte_end?: number;
+}
 
 export interface ExchangeEvent {
   event_id: string;
@@ -136,6 +149,8 @@ export interface ExchangeEvent {
   snapshot_delta: ExchangeSnapshotDelta;
   artifact_refs: ArtifactRef[];
   created_at: string;
+  /** Present only when kind is "stream_event": the observed SSE record. */
+  stream?: StreamEventRecord;
   [extension: string]: unknown;
 }
 

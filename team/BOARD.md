@@ -1,6 +1,6 @@
 # Context Lens — Chat Template MVP Board
 
-状态：**RUN — Phase 1 Raw + Chat Template**
+状态：**RUN — Phase 2 SSE (implementation complete, awaiting leader SSE acceptance)**
 
 `team/CHARTER.md` 是运行约束；本文件是任务图、接缝、证据和重开条件。manager 单写。leader 已明确授权本次 RUN；Phase 2 SSE 在 P1/P2 联合验收并获 leader 接受前不得派发。
 
@@ -12,9 +12,9 @@
 | P1 Raw Tree | in_review | Three-protocol JSON/raw fixtures render as structured tree with semantic counts, message/tool summaries, search auto-expand/highlight, controls, source pointers, and plain-text fallback; `frontend/test/RawJsonTree.test.tsx` 7 passing | manager + Raw Tree worker | IR contract |
 | P2 Chat Template | in_review | Three-protocol checked-in JSON fixtures normalize to loss-aware Context IR and render nested collapsible Qwen marker blocks (inner tool tags, collapsible JSON, thinking collapsed by default) with tools/reasoning/unknown/source pointers; `frontend/test/contextIr.test.ts`, `frontend/test/qwenChatTemplate.test.ts`, `frontend/test/ChatTemplateView.test.ts` 13 passing | manager + IR/Qwen worker | IR contract |
 | P1/P2 joint acceptance | awaiting_leader | Browser screenshots `/tmp/context-lens-phase1-final.png`, `/tmp/context-lens-phase1-chat.png`, `/tmp/context-lens-responses-json-response-chat.png`, `/tmp/context-lens-anthropic-json-response-chat.png`, `/tmp/context-lens-phase1-sse-guard-chat.png`; controlled Chrome shows Raw Tree and Qwen view for all three protocols plus JSON response reasoning/tool/unknown blocks; exact artifact hashes remain visible. `evaluate_script` reports `bodyOverflow=hidden`, `shellOverflow=hidden`, one `.viewer-body` scroller (`overflow=auto`); local network and console are clean | leader | P1 + P2 |
-| P3 SSE IR delta | planned | 三协议 SSE 事件归一为 typed delta；原始事件保留；未知事件 passthrough | manager |
-| P4 realtime renderer | planned | assistant/reasoning/tool call/tool result 增量渲染及 completed/failed/cancelled | manager |
-| P3/P4 SSE acceptance | planned | 本地 mock stream、浏览器实时交互、原始 SSE bytes 和取消/错误证据通过 | leader |
+| P3 SSE IR delta | implemented | 三协议 SSE 事件归一为 typed delta；原始事件保留；未知事件 passthrough。`backend/inspection/sse_stream.go`（增量扫描器，逐字节等价于整包解析）+ gateway stream tap → additive `stream_event` workspace 事件；前端 `streamIr.ts` 三协议归一 reducer（21 tests）。 | manager |
+| P4 realtime renderer | implemented | assistant/reasoning/tool call/tool result 增量渲染及 completed/failed/cancelled：live Chat Template 追加 block + 状态 chip、SSE tab 实时事件列表、流结束自动切 response artifact（74 frontend tests / backend race 全过）。 | manager |
+| P3/P4 SSE acceptance | awaiting_leader | 本地 mock stream（MOCK_SSE_DELAY_MS=120）、浏览器实时交互（streaming · N events 递增）、原始 SSE bytes 不变（curl 比对 + Go 测试断言 bypass 字节不变）、截断流 incomplete 标记证据通过；截图 `/tmp/context-lens-sse-live-mid.png`、`/tmp/context-lens-sse-final-chat.png`、`/tmp/context-lens-sse-anthropic-chat.png`、`/tmp/context-lens-sse-chat-toolcall.png` | leader |
 
 ## Active RUN assignments
 
@@ -71,7 +71,7 @@ protocol SSE bytes (copy only for inspection)
 | Mock upstream + visual seed | verified | `scripts/start-local.sh` supports local-only fixture upstream; `CONTEXT_LENS_PROXY_URL=http://127.0.0.1:18080 ./scripts/seed-mock-workspace.sh` produced 12 exchanges across all three protocols (six additional seeded runs); mock flushes SSE fixture lines and does not log bodies | mock route/fixture changes |
 | Chrome DevTools attachment | verified | Fresh `wsEndpoint` from `127.0.0.1:9222/json/version`; explicit attach succeeded, controlled page `http://127.0.0.1:15173/` listed as selected | Chrome session ends or endpoint changes |
 | Baseline browser smoke | verified | Attached screenshot + accessibility snapshot; six seeded exchanges visible in latest-first order; collapse/expand and Raw/Pretty tab clicks work; network requests are local; after favicon/form-field cleanup console has no error/issue entries | P1/P2 implementation changes |
-| SSE browser loop | planned | local mock stream: release, live assistant/tool/reasoning, end/error/cancel | event/reducer mismatch |
+| SSE browser loop | verified | Three protocol streams seeded through the local mock (120ms/line): Chat Template showed `response · streaming · N events` growing live, completed via `response.completed` / `[DONE]` / `message_stop`, then auto-selected the response artifact; SSE tab showed the live event list during flow and the full parse after; unknown `response.custom_fixture` stayed visible as a passthrough block; console clean; all requests stayed on 127.0.0.1 | event/reducer mismatch or terminal rule drift |
 | Secret scan | verified | `config.local.json` remains ignored and untracked; seeded synthetic fixtures contain no credentials; no key values printed; browser requests stayed on `127.0.0.1` | any fixture/config change |
 | Real upstream | deferred | no probe in this cycle | leader explicitly authorizes safe provision |
 
@@ -86,6 +86,10 @@ protocol SSE bytes (copy only for inspection)
 - The scope grammar is template-as-data: official Qwen2.5/Qwen3 chat_template Jinja files are vendored (`frontend/src/templates/`, SHA-256 in README) and parsed at runtime by `templateScopes.ts` into a scope registry (tools / tool_call / tool_response / think); the view no longer hardcodes scope names. Message text additionally gets generic balanced-tag detection so prompt-authored XML (e.g. Anthropic-style `<reference>` scopes) renders as collapsible scopes. Visual hierarchy uses one outer block border per ChatML segment; nested scopes use lighter 1px indent lines (no double border).
 - UX polish after real-data feedback: newlines adjacent to scopes are compacted (no blank lines); short inline tags render on one line; JSON string leaves containing JSON render as nested JSON; multi-line strings render as collapsible pre-wrap text blocks; ChatML block borders and markers are colored per role (user blue / assistant green / tools amber / tool_result orange / unknown dashed gray).
 - Split view: on wide viewports (width >= 1100 and aspect ratio >= 1.25) Raw and Chat Template render side by side in two independently scrolling panes sharing one artifact selection; a draggable divider resizes the panes (20%-80%), clicking any tab exits split, `\` toggles, the explicit choice persists in localStorage, and narrow viewports fall back to single-column automatically.
+- SSE live 观察走 additive `stream_event` workspace 事件：revision 恒为 0（流观察不提交修订），按 ordinal 去重（broker 回放/重连幂等），`byte_start/byte_end` 指回 response artifact 的原始字节。非 event-stream 响应不产生流事件。
+- Stream tap 位于 gateway 响应体读取路径（直接转发与 hold 捕获两条路径共用一处包装）：仅消费字节副本，传输字节与 bypass body 完全不变（Go 测试逐字节断言）。
+- 前端唯一归一层是 `streamIr.ts`：live 视图（workspace 事件流）与完整 SSE artifact 的 ChatML 渲染走同一 reducer（`applyStreamRecord`/`buildLiveStream`），两条路径按构造一致；未知事件进 passthrough block 保留可见。
+- chat_completions SSE fixture 的 tool call arguments 修正为真实分片形态（`{"key":` + `"beta"}` 两段 delta），与 JSON fixture 语义一致；e2e response hash 与 protocol 测试事件数同步更新。
 - provider extension / passthrough / unknown / source pointer 从第一版预留。
 - request/response artifact 自动按需加载；原始 artifact immutable。
 

@@ -6,7 +6,9 @@ data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","crea
 
 data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"content":"tool result"},"finish_reason":null},{"index":1,"delta":{"content":"answer"},"finish_reason":null}],"unknown_chunk_field":{"preserve":true}}
 
-data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"tool_fixture_stream","type":"function","function":{"name":"lookup_fixture","arguments":"{\\\"key\\\":\\\"beta\\\"}"}}]},"finish_reason":null},{"index":1,"delta":{},"finish_reason":null}]}
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"tool_fixture_stream","type":"function","function":{"name":"lookup_fixture","arguments":"{\"key\":"}}]},"finish_reason":null},{"index":1,"delta":{},"finish_reason":null}]}
+
+data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"beta\"}"}}]},"finish_reason":null},{"index":1,"delta":{},"finish_reason":null}]}
 
 data: {"id":"chatcmpl_fixture_stream_001","object":"chat.completion.chunk","created":1710000020,"model":"fixture-chat-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"},{"index":1,"delta":{},"finish_reason":"stop"}]}
 
