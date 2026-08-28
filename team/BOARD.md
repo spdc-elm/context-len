@@ -81,7 +81,7 @@ protocol SSE bytes (copy only for inspection)
 - Raw 是结构化 JSON tree；解析失败回退原始文本。
 - Chat Template 是连续上下文流，不是普通聊天气泡；UI 只显示模板名称。
 - SSE 是 MVP 内能力，但放在 P1/P2 联合验收之后；不作为常驻主阅读 Tab。
-- Qwen ChatML 是第一版内置模板；Llama/Mistral/Gemma 和导入 tokenizer config 后置。
+- Qwen tool ordering was verified against official Qwen2.5/Qwen3 templates: tool definitions are injected into the initial system segment before messages; tool results use a user segment. The renderer was corrected accordingly. Human-readable JSON whitespace remains a display choice, not a token-exact claim.
 - provider extension / passthrough / unknown / source pointer 从第一版预留。
 - request/response artifact 自动按需加载；原始 artifact immutable。
 

@@ -70,7 +70,34 @@ Chat Template · Qwen ChatML
 
 Qwen 的 tools、tool call、generation prompt 等模板细节由 renderer 负责；不能把 Qwen 特殊语法散落在三个协议 adapter 或 React 组件中。
 
-## 4. Raw Tree
+## 3.1 Qwen tool serialization order (verified against official templates)
+
+The Qwen2.5 and Qwen3 `tokenizer_config.json` templates place the tool definitions in the initial `system` ChatML segment, before iterating over ordinary messages. They do not append a standalone tool-definition message after the conversation. In the tool-enabled branch the sequence is therefore, conceptually:
+
+```text
+<|im_start|>system
+[system content or Qwen default]
+
+# Tools
+...
+<tools>
+[tool JSON definitions]
+</tools>
+...
+<|im_end|>
+<|im_start|>user
+...
+<|im_end|>
+...
+```
+
+Qwen2.5/Qwen3 then serialize assistant tool calls inside the assistant segment using `<tool_call>...</tool_call>`. Tool results are wrapped in a `user` segment containing `<tool_response>...</tool_response>`; consecutive tool results share that user segment. The renderer may pretty-print JSON for observation readability, but must retain the original argument string and source pointer and must not claim byte/token identity with the model's Jinja template.
+
+Primary references:
+
+- Qwen2.5-7B-Instruct [`tokenizer_config.json`](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct/raw/main/tokenizer_config.json)
+- Qwen3-8B [`tokenizer_config.json`](https://huggingface.co/Qwen/Qwen3-8B/raw/main/tokenizer_config.json)
+
 
 Raw 是 JSON 的结构化检视器，不是 Pretty JSON 文本。JSON 可解析时：
 

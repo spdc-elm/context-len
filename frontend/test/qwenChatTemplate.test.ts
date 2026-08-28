@@ -4,10 +4,12 @@ import { QWEN_CHAT_TEMPLATE_NAME, renderQwenBlocks, renderQwenChatML } from "../
 
 describe("Qwen ChatML renderer", () => {
   it("renders a continuous marker stream for semantic blocks", () => {
-    const document = normalizeContext("responses", JSON.stringify({ instructions: "rules", input: [{ type: "message", role: "user", content: "hello" }], output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "hi" }] }] }));
+    const document = normalizeContext("responses", JSON.stringify({ instructions: "rules", input: [{ type: "message", role: "user", content: "hello" }], tools: [{ type: "function", name: "lookup", parameters: {} }], output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "hi" }] }] }));
     const rendered = renderQwenChatML(document);
-    expect(rendered).toContain("<|im_start|>system\nrules\n<|im_end|>");
-    expect(rendered).toContain("<|im_start|>user\nhello\n<|im_end|>");
+    expect(rendered.indexOf("# Tools")).toBeGreaterThanOrEqual(0);
+    expect(rendered.indexOf("# Tools")).toBeLessThan(rendered.indexOf("<|im_start|>user"));
+    expect(rendered).toContain("<|im_start|>system\n");
+    expect(rendered).toContain("<|im_start|>user\nhello");
     expect(rendered).toContain("<|im_start|>assistant\nhi\n<|im_end|>");
     expect(rendered).not.toContain("accuracy");
   });
