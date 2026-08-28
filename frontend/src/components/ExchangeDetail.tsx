@@ -48,8 +48,8 @@ interface ExchangeDetailProps {
 }
 
 const tabs: Array<{ id: DetailTab; label: string; description: string }> = [
-  { id: "raw", label: "Raw", description: "Opaque artifact bytes" },
   { id: "chat_template", label: "Chat Template", description: "Qwen ChatML" },
+  { id: "raw", label: "Raw", description: "Opaque artifact bytes" },
   { id: "sse", label: "SSE", description: "Event projection" },
 ];
 
@@ -399,17 +399,6 @@ export function ExchangeDetail({
   const artifact = artifactForTab(exchange, activeTab, selectedArtifactId);
   const body = bodyFor(artifact, loadedBodies);
 
-  // When a live stream finishes, the response artifact is the authority.
-  // Switch to it once (unless the operator already picked an artifact) so
-  // the completed view replaces the transient live projection seamlessly.
-  const liveDone = liveStream !== undefined && liveStream.status !== "streaming";
-  useEffect(() => {
-    if (!exchange || !liveDone || selectedArtifactId) return;
-    const refs = exchange.response.artifact_refs ?? [];
-    const target = refs.find((ref) => ref.content_type.includes("event-stream")) ?? refs.find((ref) => ref.complete);
-    if (target) setSelectedArtifactId(target.artifact_id);
-  }, [exchange, liveDone, selectedArtifactId]);
-
   useEffect(() => {
     if (artifact && !loadedBodies[artifact.artifact_id] && !bodyLoading) onLoadBody(artifact);
   }, [artifact?.artifact_id, bodyLoading, loadedBodies, onLoadBody]);
@@ -461,6 +450,7 @@ export function ExchangeDetail({
 
   const canRequestAction = exchange.state === "request_held";
   const canResponseAction = exchange.state === "response_held";
+  const showViewerSearch = split || activeTab === "raw";
   const openEditor = (mode: CommandIntent["kind"]) => {
     setEditorMode(mode);
     setEditorDirty(false);
@@ -486,20 +476,21 @@ export function ExchangeDetail({
   return (
     <main className="detail-panel" aria-label="Exchange detail">
       <header className="detail-header">
-        <div>
+        <div className="detail-title-block">
           <div className="detail-title-line"><span className={`protocol-dot protocol-${exchange.protocol}`} /><p className="eyebrow">{protocolLabel(exchange.protocol)}</p><span className={`state-pill state-${exchange.state}`}>{exchange.state.replaceAll("_", " ")}</span></div>
-          <h1>{exchange.request.envelope.method} <span>{exchange.request.envelope.path}</span></h1>
+          <div className="detail-request-line">
+            <h1>{exchange.request.envelope.method} <span>{exchange.request.envelope.path}</span></h1>
+            <div className="detail-inline-meta" aria-label="Exchange metadata">
+              <div className="detail-inline-item"><span>status</span><strong>{exchange.response.envelope.status || "—"}</strong></div>
+              <div className="detail-inline-item"><span>request</span><strong>{exchange.policy.request_gate}</strong></div>
+              <div className="detail-inline-item"><span>response</span><strong>{exchange.policy.response_gate}</strong></div>
+              <div className="detail-inline-item"><span>updated</span><strong>{formatWorkspaceTime(exchange.updated_at)} UTC+8</strong></div>
+            </div>
+          </div>
           <p className="detail-subtitle">{stateDescription(exchange)}</p>
         </div>
         <div className="exchange-id"><span>EXCHANGE</span><code>{exchange.exchange_id}</code>{typeof exchange.revision === "number" && <span>REVISION {exchange.revision}</span>}</div>
       </header>
-
-      <section className="metadata-strip" aria-label="Exchange metadata">
-        <div><span>status</span><strong>{exchange.response.envelope.status || "—"}</strong></div>
-        <div><span>request gate</span><strong>{exchange.policy.request_gate}</strong></div>
-        <div><span>response gate</span><strong>{exchange.policy.response_gate}</strong></div>
-        <div><span>updated</span><strong>{formatWorkspaceTime(exchange.updated_at)} UTC+8</strong></div>
-      </section>
 
       <section className="viewer-card">
         <div className="viewer-toolbar">
@@ -507,19 +498,19 @@ export function ExchangeDetail({
             {tabs.map((tab) => <button type="button" role="tab" aria-selected={activeTab === tab.id && !split} className={`tab ${activeTab === tab.id && !split ? "active" : ""}`} key={tab.id} onClick={() => handleTabClick(tab.id)}>{tab.label}<small>{tab.description}</small></button>)}
           </div>
           <div className="toolbar-right">
+            {showViewerSearch && <label className="viewer-search"><span>Search</span><input name="search" aria-label="Search raw JSON" type="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in raw JSON" />{search && <button type="button" className="viewer-search-clear" aria-label="Clear search" onClick={() => onSearchChange("")}>×</button>}</label>}
             <LayoutToggle split={split} splitAvailable={isWide} onSelect={setSplitPref} />
             <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
           </div>
         </div>
-        {(split || activeTab === "raw" || activeTab === "chat_template") && <div className="search-toolbar"><label>Search <input name="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
         <div className={`viewer-body ${split ? "split-mode" : ""}`} data-split-view={split ? "true" : undefined} ref={splitBodyRef}>
           {split ? (<>
             <div className="viewer-pane pane-left" style={{ flexBasis: `${Math.round(paneRatio * 100)}%` }}>
-              <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />
+              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} />
             </div>
             <div className="pane-divider" role="separator" aria-orientation="vertical" aria-label="Resize panes" title="Drag to resize" onMouseDown={startPaneResize} />
-            <div className="viewer-pane">
-              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} />
+            <div className="viewer-pane pane-right">
+              <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />
             </div>
           </>) : (<>
             {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactRef } from "../contracts";
 import { normalizeContext, type ContextBlock } from "../contextIr";
 import {
@@ -245,6 +245,7 @@ function blockToSegment(block: ContextBlock, index: number): TagSegment {
     marker: true,
     blockKind: block.kind,
     pointer: block.sourcePointer,
+    defaultOpen: false,
     children,
   };
 }
@@ -401,6 +402,16 @@ function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment;
   );
 }
 
+function findScrollParent(element: HTMLElement | null): HTMLElement | null {
+  let parent = element?.parentElement ?? null;
+  while (parent) {
+    const style = window.getComputedStyle(parent);
+    if (style.overflowY === "auto" || style.overflowY === "scroll" || style.overflow === "auto" || style.overflow === "scroll") return parent;
+    parent = parent.parentElement;
+  }
+  return null;
+}
+
 function streamChip(status: StreamStatus, detail: string | undefined, eventCount: number) {
   return (
     <span className={`chat-live-chip chat-live-${status}`}>
@@ -413,6 +424,10 @@ function streamChip(status: StreamStatus, detail: string | undefined, eventCount
 
 export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplateViewProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const viewRef = useRef<HTMLElement | null>(null);
+  const scrollParentRef = useRef<HTMLElement | null>(null);
+  const followLatestRef = useRef(true);
+  const autoScrollingRef = useRef(false);
   const document = useMemo(() => normalizeContext(protocol, body ?? ""), [protocol, body]);
   const isSse =
     artifact?.content_type.includes("event-stream") || /^\s*(?:event|data|id|retry):/m.test(body ?? "");
@@ -436,9 +451,38 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
   }, [document, live, streamFromBody]);
   const segments = useMemo(() => blocks.map(({ block }, index) => blockToSegment(block, index)), [blocks]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setCollapsed({});
+    // Switching artifacts starts a fresh reading session. The next layout
+    // pass will place the Chat Template at the end of that artifact.
+    followLatestRef.current = true;
   }, [body]);
+
+  useEffect(() => {
+    const container = findScrollParent(viewRef.current);
+    scrollParentRef.current = container;
+    if (!container) return undefined;
+    const onScroll = () => {
+      if (autoScrollingRef.current) return;
+      const distanceFromBottom = container.scrollHeight - container.clientHeight - container.scrollTop;
+      // A user who leaves the bottom owns the viewport. New stream blocks may
+      // grow below it, but must never pull this reading position downward.
+      followLatestRef.current = distanceFromBottom <= 20;
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, [body, isSse]);
+
+  useLayoutEffect(() => {
+    const container = scrollParentRef.current ?? findScrollParent(viewRef.current);
+    if (!container || !followLatestRef.current) return;
+    autoScrollingRef.current = true;
+    container.scrollTop = container.scrollHeight;
+    // ScrollTop assignment is synchronous; release the guard after any scroll
+    // notification queued by the browser so the initial pin is not interpreted
+    // as a user's manual scroll.
+    queueMicrotask(() => { autoScrollingRef.current = false; });
+  }, [body, isSse, live?.eventCount, streamFromBody?.eventCount, segments.length]);
 
   if (body === undefined) {
     return (
@@ -454,6 +498,7 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
   return (
     <section
       className="chat-template-view"
+      ref={viewRef}
       aria-label={QWEN_CHAT_TEMPLATE_NAME}
       data-chat-template="qwen-chatml"
       data-live={streaming ? "true" : undefined}

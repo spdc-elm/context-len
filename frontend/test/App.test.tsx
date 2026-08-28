@@ -122,8 +122,9 @@ describe("split view", () => {
     const rendered = await renderApp();
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(rendered.querySelector('[data-split-view="true"]')).not.toBeNull();
-    expect(rendered.querySelector(".viewer-pane .raw-json-tree")).not.toBeNull();
-    expect(rendered.querySelector('.viewer-pane [data-chat-template="qwen-chatml"]')).not.toBeNull();
+    const panes = [...rendered.querySelectorAll("[data-split-view=true] .viewer-pane")];
+    expect(panes[0]?.querySelector('[data-chat-template="qwen-chatml"]')).not.toBeNull();
+    expect(panes[1]?.querySelector(".raw-json-tree")).not.toBeNull();
   });
 
   it("falls back to a single column on narrow viewports", async () => {

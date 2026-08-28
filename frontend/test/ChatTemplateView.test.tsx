@@ -41,8 +41,13 @@ const anthropicResponse = JSON.stringify({
 let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 
-function renderView(props: React.ComponentProps<typeof ChatTemplateView>): HTMLDivElement {
+function renderView(props: React.ComponentProps<typeof ChatTemplateView>, scrollable = false): HTMLDivElement {
   host = document.createElement("div");
+  if (scrollable) {
+    host.style.overflow = "auto";
+    Object.defineProperty(host, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, value: 400 });
+  }
   document.body.appendChild(host);
   root = createRoot(host);
   act(() => {
@@ -58,6 +63,17 @@ function click(element: Element | null): void {
   });
 }
 
+function expandTopLevelBlocks(rendered: HTMLElement): void {
+  // Re-query after each click: React replaces the segment subtree on state
+  // updates, so a previously captured NodeList contains detached buttons.
+  while (true) {
+    const button = [...rendered.querySelectorAll('.ctx-block > .ctx-tag-line > button.chevron')]
+      .find((item) => item.getAttribute("aria-expanded") !== "true");
+    if (!button) return;
+    click(button);
+  }
+}
+
 afterEach(() => {
   if (root && host) {
     act(() => root?.unmount());
@@ -68,8 +84,17 @@ afterEach(() => {
 });
 
 describe("ChatTemplateView", () => {
+  it("starts with every ChatML block collapsed", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    const blocks = [...rendered.querySelectorAll('.ctx-block > .ctx-tag-line')];
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.every((block) => block.querySelector('.chevron')?.getAttribute("aria-expanded") === "false")).toBe(true);
+    expect(rendered.textContent).not.toContain("You are precise.");
+  });
+
   it("renders nested ChatML markers, tool tags and collapsible JSON", () => {
     const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    expandTopLevelBlocks(rendered);
     expect(rendered.textContent).toContain("<|im_start|>system");
     expect(rendered.textContent).toContain("<tools>");
     expect(rendered.textContent).toContain("You are precise.");
@@ -84,6 +109,7 @@ describe("ChatTemplateView", () => {
 
   it("collapses nested tag regions behind a subtle chevron", () => {
     const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    expandTopLevelBlocks(rendered);
     const callTag = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope');
     expect(callTag?.textContent).toContain("alpha");
     click(callTag?.querySelector("button.chevron") ?? null);
@@ -96,6 +122,7 @@ describe("ChatTemplateView", () => {
 
   it("collapses JSON containers independently of their tag", () => {
     const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    expandTopLevelBlocks(rendered);
     const jsonHead = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope .ctx-json-head button.chevron');
     click(jsonHead);
     const callTag = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope');
@@ -105,6 +132,7 @@ describe("ChatTemplateView", () => {
 
   it("keeps thinking blocks collapsed by default for Anthropic responses", () => {
     const rendered = renderView({ protocol: "anthropic_messages", body: anthropicResponse });
+    expandTopLevelBlocks(rendered);
     const think = rendered.querySelector('[data-ctx-tag="think"]');
     expect(think).not.toBeNull();
     expect(think?.textContent).not.toContain("private reasoning");
@@ -123,6 +151,7 @@ describe("ChatTemplateView", () => {
       ],
     });
     const rendered = renderView({ protocol: "chat_completions", body: request });
+    expandTopLevelBlocks(rendered);
     const reference = rendered.querySelector('[data-ctx-tag="reference"]');
     expect(reference).not.toBeNull();
     expect(reference?.textContent).toContain("docs");
@@ -137,6 +166,7 @@ describe("ChatTemplateView", () => {
   it("keeps unbalanced angle-bracket text literal", () => {
     const request = JSON.stringify({ messages: [{ role: "user", content: "a < b and <orphan> stays text" }] });
     const rendered = renderView({ protocol: "chat_completions", body: request });
+    expandTopLevelBlocks(rendered);
     expect(rendered.querySelector('[data-ctx-tag="orphan"]')).toBeNull();
     expect(rendered.textContent).toContain("<orphan>");
   });
@@ -146,6 +176,7 @@ describe("ChatTemplateView", () => {
       messages: [{ role: "user", content: "Line1\n<foo>bar</foo>\nLine2\n<baz>\nmulti\nline\n</baz>\ntail" }],
     });
     const rendered = renderView({ protocol: "chat_completions", body: request });
+    expandTopLevelBlocks(rendered);
     const foo = rendered.querySelector('[data-ctx-tag="foo"]');
     expect(foo?.querySelector(".ctx-inline-text")?.textContent).toBe("bar");
     const texts = [...rendered.querySelectorAll(".ctx-text")].map((e) => e.textContent);
@@ -162,6 +193,7 @@ describe("ChatTemplateView", () => {
       ],
     });
     const rendered = renderView({ protocol: "anthropic_messages", body: request });
+    expandTopLevelBlocks(rendered);
     const result = rendered.querySelector('[data-ctx-tag="tool_response"].ctx-template-scope');
     expect(result?.textContent).toContain("ok:");
     expect(result?.textContent).toContain("true");
@@ -183,6 +215,7 @@ describe("ChatTemplateView", () => {
       tools: [{ type: "function", function: { name: "lookup", description: "line1\nline2\nline3", parameters: {} } }],
     });
     const rendered = renderView({ protocol: "chat_completions", body: request });
+    expandTopLevelBlocks(rendered);
     const collapsed = rendered.querySelector(".ctx-json-text");
     expect(collapsed).not.toBeNull();
     expect(collapsed?.querySelector(".ctx-json-text-block")).toBeNull();
@@ -209,9 +242,35 @@ describe("ChatTemplateView", () => {
         storage_ref: "mem://a",
       },
     });
+    expandTopLevelBlocks(rendered);
     expect(rendered.textContent).toContain("response · completed · [DONE] · 3 events");
     expect(rendered.textContent).toContain("hi there");
     expect(rendered.textContent).not.toContain("SSE phase");
+  });
+
+  it("keeps the viewport pinned to the end until the user scrolls away", async () => {
+    const body = JSON.stringify({ messages: [{ role: "user", content: "hi" }] });
+    const live = {
+      protocol: "chat_completions" as const,
+      status: "streaming" as const,
+      nextOrdinal: 1,
+      blocks: [{ id: "live:choice:0", kind: "assistant" as const, role: "assistant" as const, text: "first", content: [], sourcePointer: "/events/0" }],
+      events: [{ ordinal: 0, data: "first" }],
+      eventCount: 1,
+    };
+    const rendered = renderView({ protocol: "chat_completions", body, live }, true);
+    const scrollHost = rendered;
+    // The layout effect pins a fresh view to the newest content.
+    expect(scrollHost.scrollTop).toBe(1000);
+
+    // The initial programmatic pin has finished before a user can interact.
+    await Promise.resolve();
+    // A real user scroll takes ownership of the viewport.
+    scrollHost.scrollTop = 260;
+    scrollHost.dispatchEvent(new Event("scroll"));
+    const nextLive = { ...live, nextOrdinal: 2, eventCount: 2, events: [...live.events, { ordinal: 1, data: "second" }], blocks: [{ ...live.blocks[0], text: "first second" }] };
+    act(() => { root?.render(<ChatTemplateView protocol="chat_completions" body={body} live={nextLive} />); });
+    expect(scrollHost.scrollTop).toBe(260);
   });
 
   it("appends live stream blocks after the request context while streaming", () => {
@@ -237,6 +296,7 @@ describe("ChatTemplateView", () => {
         eventCount: 1,
       },
     });
+    expandTopLevelBlocks(rendered);
     expect(rendered.querySelector(".chat-template-view")?.getAttribute("data-live")).toBe("true");
     expect(rendered.querySelector(".chat-live-chip")?.textContent).toContain("response · streaming · 1 events");
     expect(rendered.textContent).toContain("hi");
