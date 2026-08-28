@@ -339,13 +339,9 @@ pass/hold + edited release
 hold/hold
 ```
 
-每种组合至少验证：
 
-- body hash
-- status/header 语义
-- model 和未知字段
-- stream event grammar
-- 多工具调用和多 choice
-- parser warning 不影响 pass-through
-- client cancellation
-- owner / credential safety
+## Chat Template observation extension
+
+三种协议的可读上下文观察采用 `protocol adapter → loss-aware Context IR → Qwen ChatML renderer`，不是 protocol 与模板的两两转换。Context IR 是派生投影，不是 wire protocol 或转发输入；必须保留 provider extension、passthrough、unknown item 及 source JSON pointer。Raw 是可折叠 JSON tree，解析失败回退纯文本；Chat Template 是连续的 marker/context 流。SSE 属于 MVP 后段，原始 SSE grammar/bytes 仍按本文件前述规则保留，实时内容通过 typed IR delta 投影到 Chat Template。
+
+完整的 block、折叠、Qwen renderer 和 SSE phase 规则见 [`docs/chat-template-spec.md`](chat-template-spec.md)。

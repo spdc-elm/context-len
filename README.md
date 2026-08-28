@@ -2,13 +2,15 @@
 
 `context-lens` 是一个独立的 LLM 请求观察与拦截工作台。它以 HTTP 应用层 wire 数据为权威来源，把 Responses、Chat Completions、Anthropic Messages 请求和响应以原协议转发，同时提供人类可读的旁路解析视图，以及可审计的人工放行、人工回复和响应编辑。
 
-当前状态：核心 MVP 已进入最终验收。三协议透明转发、独立 request/response gate、artifact/hash、协议观察与显式 mutation、workspace REST/SSE API 以及真实 API 前端已经接通；最新证据和尚未关闭的验收项见 [`team/BOARD.md`](team/BOARD.md)。
+当前状态：透明代理核心 MVP 已完成并归档验收；Chat Template MVP 处于 PREPARE，计划分 Raw + Chat Template 联合验收、SSE 后段验收两个阶段。最新任务图和设计规范见 [`team/BOARD.md`](team/BOARD.md) 与 [`docs/chat-template-spec.md`](docs/chat-template-spec.md)。
 
 ## 必读文档
 
-1. [`team/CHARTER.md`](team/CHARTER.md)：目标、硬约束、团队纪律和验收标准
-2. [`team/BOARD.md`](team/BOARD.md)：任务图、接缝、证据和阶段状态
-3. [`docs/protocol-contract.md`](docs/protocol-contract.md)：协议、wire 保真、拦截状态机和 UX 契约
+1. [`team/CHARTER.md`](team/CHARTER.md)：本轮 Chat Template MVP 目标、阶段验收、硬约束和团队纪律
+2. [`team/BOARD.md`](team/BOARD.md)：本轮任务图、接缝、证据和阶段状态
+3. [`docs/protocol-contract.md`](docs/protocol-contract.md)：三协议、wire 保真、拦截状态机和观察边界
+4. [`docs/chat-template-spec.md`](docs/chat-template-spec.md)：Raw Tree、Qwen ChatML、Context IR 和 SSE 观察设计
+5. [`docs/runtime-contract.md`](docs/runtime-contract.md)：backend 与 workspace UI 的运行时接缝
 
 ## 本地运行
 

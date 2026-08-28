@@ -33,3 +33,9 @@ Kinds include `exchange_created, request_held, upstream_started, response_held, 
 ## Transport invariant
 
 The proxy forwards artifact readers directly in bypass/release-unchanged paths. It never JSON decodes/re-encodes or aggregates/re-generates SSE on those paths. Inspector output is projection-only and cannot become transport input.
+
+## Derived context projection seam
+
+Workspace may add an additive context projection to request/response parts or events. It is derived from artifact bytes and is never accepted as transport input. The projection may contain a loss-aware Context IR, Qwen ChatML render blocks, provider extensions/passthrough, unknown items, source JSON pointers, and typed streaming deltas. Large rendered bodies remain lazy artifact reads; secrets remain server-side redacted.
+
+The product behavior and phase acceptance for this seam are defined in [`docs/chat-template-spec.md`](chat-template-spec.md).
