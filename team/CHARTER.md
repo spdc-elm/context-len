@@ -1,13 +1,14 @@
 # Context Lens — Chat Template MVP Charter
 
-状态：**PREPARE**。本周期用于把已完成的透明代理 MVP 推进为三协议的 Raw / Chat Template / SSE 观察体验。manager 是 `team/` canonical state 的唯一写入者；收到 leader 明确 kickoff 前不得运行产品 executor。
+状态：**RUN — Phase 1 Raw + Chat Template**。本周期用于把已完成的透明代理 MVP 推进为三协议的 Raw / Chat Template / SSE 观察体验。manager 是 `team/` canonical state 的唯一写入者；已收到 leader 明确 RUN kickoff。
 
 ## Workspace identity
 
 - 项目：`context-lens`
 - 绝对工作区：`/Users/littlefairy/projects/context-lens`
 - Git：独立本地仓库，branch `main`
-- 本周期基线：`a6e755fbcefaef149af51cb97451162a2c54a8cb`
+- 本周期预期基线（leader kickoff）：`0c9a84c`；实际 RUN 起点为其后的已审阅准备提交 `ef59a0e`。
+- 本次 RUN 启动核对：worktree `/Users/littlefairy/projects/context-lens`、branch `main`、HEAD `ef59a0e1cf8dd450f8f804fb34f7e85d5ccdc8e9`、dirty state clean。leader 提供的 `0c9a84c` 是已知准备阶段提交；其后的 `25808f3`、`7a70756`、`0f91647`、`ef59a0e` 均为本周期已审阅的 mock/浏览器/启动 plumbing 漂移，未覆盖或回退。
 - 旧周期归档：`team/archive/2026-08-mvp-core/`
 - 协议 / wire source of truth：`docs/protocol-contract.md`
 - backend/frontend runtime seam：`docs/runtime-contract.md`

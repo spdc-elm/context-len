@@ -1,22 +1,30 @@
 # Context Lens — Chat Template MVP Board
 
-状态：**PREPARE — 等待 leader kickoff**
+状态：**RUN — Phase 1 Raw + Chat Template**
 
-`team/CHARTER.md` 是运行约束；本文件是任务图、接缝、证据和重开条件。manager 单写。
+`team/CHARTER.md` 是运行约束；本文件是任务图、接缝、证据和重开条件。manager 单写。leader 已明确授权本次 RUN；Phase 2 SSE 在 P1/P2 联合验收并获 leader 接受前不得派发。
 
 ## Phase gates
 
 | Gate | 状态 | 完成条件 | 验收者 |
 |---|---|---|---|
 | P0 contract / docs freeze | verified | 旧 team 已归档；本 charter、board、Chat Template spec 与 runtime/protocol 接缝一致 | manager |
-| P1 Raw Tree | planned | 三协议 JSON 可折叠结构化展示；数组/message/tool 摘要、搜索定位、非 JSON fallback | manager + leader |
-| P2 Chat Template | planned | 三协议 → Context IR → Qwen ChatML；连续 marker 流、tool/reasoning/unknown/source pointer 可读可追溯 | manager + leader |
-| P1/P2 joint acceptance | planned | Raw + Chat Template 的浏览器体验、测试、artifact 不变证据通过 | leader |
+| P1 Raw Tree | in_progress | 三协议 JSON 结构化展示组件与交互，非 JSON fallback | manager + Raw Tree worker | IR contract |
+| P2 Chat Template | in_progress | 三协议 normalizer + Context IR + Qwen ChatML renderer | manager + IR/Qwen worker | IR contract |
+| P1/P2 joint acceptance | planned | Raw + Chat Template 的浏览器体验、测试、artifact 不变证据通过 | leader | P1 + P2 |
 | P3 SSE IR delta | planned | 三协议 SSE 事件归一为 typed delta；原始事件保留；未知事件 passthrough | manager |
 | P4 realtime renderer | planned | assistant/reasoning/tool call/tool result 增量渲染及 completed/failed/cancelled | manager |
 | P3/P4 SSE acceptance | planned | 本地 mock stream、浏览器实时交互、原始 SSE bytes 和取消/错误证据通过 | leader |
 
-## Workstreams and write boundaries
+## Active RUN assignments
+
+| Agent | Scope | Exclusive files | Completion evidence | Status |
+|---|---|---|---|---|
+| Raw Tree worker | JSON tree component and focused UI tests | `frontend/src/components/RawJsonTree.tsx`, `frontend/test/RawJsonTree.test.tsx` and no other files unless manager reassigns | component tests, typed build compatibility, no wire writes | dispatched |
+| IR/Qwen worker | browser Context IR normalizers and Qwen renderer pure modules/tests | `frontend/src/contextIr.ts`, `frontend/src/qwenChatTemplate.ts`, `frontend/test/contextIr.test.ts`, `frontend/test/qwenChatTemplate.test.ts` | three-protocol fixtures, unknown/source pointers, marker stream, pure tests | dispatched |
+
+Manager owns `ExchangeDetail.tsx`, `contracts.ts` integration, shared CSS, phase integration, browser acceptance, and all `team/` writes. Workers must not edit `team/`, backend transport, config, references, or each other’s files.
+
 
 | Workstream | Owner rule | Exclusive scope | Depends on |
 |---|---|---|---|
