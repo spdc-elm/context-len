@@ -11,7 +11,7 @@
 | P0 contract / docs freeze | verified | 旧 team 已归档；本 charter、board、Chat Template spec 与 runtime/protocol 接缝一致 | manager |
 | P1 Raw Tree | in_review | Three-protocol JSON/raw fixtures render as structured tree with semantic counts, message/tool summaries, search auto-expand/highlight, controls, source pointers, and plain-text fallback; `frontend/test/RawJsonTree.test.tsx` 7 passing | manager + Raw Tree worker | IR contract |
 | P2 Chat Template | in_review | Three-protocol checked-in JSON fixtures normalize to loss-aware Context IR and render continuous Qwen marker blocks with tools/reasoning/unknown/source pointers; `frontend/test/contextIr.test.ts`, `frontend/test/qwenChatTemplate.test.ts` 8 passing | manager + IR/Qwen worker | IR contract |
-| P1/P2 joint acceptance | awaiting_leader | Browser screenshots `/tmp/context-lens-phase1-final.png`, `/tmp/context-lens-phase1-chat.png`, `/tmp/context-lens-chat-protocol.png`, `/tmp/context-lens-anthropic-template.png`; controlled Chrome shows Raw Tree and Qwen view; exact artifact hash remains visible and local network/console are clean | leader | P1 + P2 |
+| P1/P2 joint acceptance | awaiting_leader | Browser screenshots `/tmp/context-lens-phase1-final.png`, `/tmp/context-lens-phase1-chat.png`, `/tmp/context-lens-responses-json-response-chat.png`, `/tmp/context-lens-anthropic-json-response-chat.png`, `/tmp/context-lens-phase1-sse-guard-chat.png`; controlled Chrome shows Raw Tree and Qwen view for all three protocols plus JSON response reasoning/tool/unknown blocks; exact artifact hashes remain visible. `evaluate_script` reports `bodyOverflow=hidden`, `shellOverflow=hidden`, one `.viewer-body` scroller (`overflow=auto`); local network and console are clean | leader | P1 + P2 |
 | P3 SSE IR delta | planned | 三协议 SSE 事件归一为 typed delta；原始事件保留；未知事件 passthrough | manager |
 | P4 realtime renderer | planned | assistant/reasoning/tool call/tool result 增量渲染及 completed/failed/cancelled | manager |
 | P3/P4 SSE acceptance | planned | 本地 mock stream、浏览器实时交互、原始 SSE bytes 和取消/错误证据通过 | leader |
@@ -72,7 +72,7 @@ protocol SSE bytes (copy only for inspection)
 | Chrome DevTools attachment | verified | Fresh `wsEndpoint` from `127.0.0.1:9222/json/version`; explicit attach succeeded, controlled page `http://127.0.0.1:15173/` listed as selected | Chrome session ends or endpoint changes |
 | Baseline browser smoke | verified | Attached screenshot + accessibility snapshot; six seeded exchanges visible in latest-first order; collapse/expand and Raw/Pretty tab clicks work; network requests are local; after favicon/form-field cleanup console has no error/issue entries | P1/P2 implementation changes |
 | SSE browser loop | planned | local mock stream: release, live assistant/tool/reasoning, end/error/cancel | event/reducer mismatch |
-| Secret scan | planned | repository/config/log scan without printing values | any credential exposure |
+| Secret scan | verified | `config.local.json` remains ignored and untracked; seeded synthetic fixtures contain no credentials; no key values printed; browser requests stayed on `127.0.0.1` | any fixture/config change |
 | Real upstream | deferred | no probe in this cycle | leader explicitly authorizes safe provision |
 
 ## Decisions
