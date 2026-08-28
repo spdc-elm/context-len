@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type {
   ArtifactRef,
   ExchangeSnapshot,
@@ -48,6 +48,68 @@ const tabs: Array<{ id: DetailTab; label: string; description: string }> = [
   { id: "chat_template", label: "Chat Template", description: "Qwen ChatML" },
   { id: "sse", label: "SSE", description: "Event projection" },
 ];
+
+// Split view: Raw and Chat Template render side by side when the viewport is
+// wide enough for two readable columns; otherwise fall back to single column.
+const SPLIT_STORAGE_KEY = "context-lens-split";
+const SPLIT_MIN_WIDTH = 1100;
+const SPLIT_MIN_RATIO = 1.25;
+
+function viewportSupportsSplit(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.innerWidth >= SPLIT_MIN_WIDTH &&
+    window.innerWidth / Math.max(1, window.innerHeight) >= SPLIT_MIN_RATIO
+  );
+}
+
+function readStoredSplitChoice(): boolean | null {
+  try {
+    const stored = window.localStorage.getItem(SPLIT_STORAGE_KEY);
+    return stored === null ? null : stored === "true";
+  } catch {
+    return null;
+  }
+}
+
+function LayoutToggle({
+  split,
+  splitAvailable,
+  onSelect,
+}: {
+  split: boolean;
+  splitAvailable: boolean;
+  onSelect: (mode: boolean) => void;
+}) {
+  return (
+    <div className="layout-toggle" role="group" aria-label="View layout">
+      <button
+        type="button"
+        className={`layout-option ${!split ? "active" : ""}`}
+        aria-pressed={!split}
+        title="Single view"
+        onClick={() => onSelect(false)}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+          <rect x="1.5" y="2" width="9" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className={`layout-option split ${split ? "active" : ""}`}
+        aria-pressed={split}
+        disabled={!splitAvailable}
+        title={splitAvailable ? "Split view (\\)" : "Split view needs a wider window"}
+        onClick={() => onSelect(true)}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+          <rect x="1.5" y="2" width="9" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <line x1="6" y1="2.5" x2="6" y2="9.5" stroke="currentColor" strokeWidth="1.2" />
+        </svg>
+      </button>
+    </div>
+  );
+}
 
 function protocolLabel(protocol: ExchangeSnapshot["protocol"]): string {
   const labels: Record<string, string> = {
@@ -276,6 +338,68 @@ export function ExchangeDetail({
   const [editorMode, setEditorMode] = useState<CommandIntent["kind"]>();
   const [editorText, setEditorText] = useState("");
   const [editorDirty, setEditorDirty] = useState(false);
+  const splitBodyRef = useRef<HTMLDivElement | null>(null);
+  const [isWide, setIsWide] = useState(() => viewportSupportsSplit());
+  const [splitChoice, setSplitChoice] = useState<boolean | null>(() => readStoredSplitChoice());
+  const [paneRatio, setPaneRatio] = useState(0.5);
+  // No manual choice yet: split on wide viewports by default (it reads better
+  // than one long column); an explicit toggle is persisted.
+  const split = isWide && (splitChoice ?? true);
+
+  const setSplitPref = (value: boolean) => {
+    setSplitChoice(value);
+    try {
+      window.localStorage.setItem(SPLIT_STORAGE_KEY, String(value));
+    } catch {
+      // Persistence is a convenience; private browsing may refuse it.
+    }
+  };
+
+  useEffect(() => {
+    const update = () => setIsWide(viewportSupportsSplit());
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "\\" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) return;
+      if (!isWide) return;
+      event.preventDefault();
+      setSplitPref(!split);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [split, isWide]);
+
+  const startPaneResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const container = splitBodyRef.current;
+    if (!container) return;
+    const startX = event.clientX;
+    const startRatio = paneRatio;
+    const width = container.getBoundingClientRect().width || 1;
+    const onMove = (moveEvent: globalThis.MouseEvent) => {
+      const ratio = startRatio + (moveEvent.clientX - startX) / width;
+      setPaneRatio(Math.min(0.8, Math.max(0.2, ratio)));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("pane-resizing");
+    };
+    document.body.classList.add("pane-resizing");
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const handleTabClick = (tab: DetailTab) => {
+    // Clicking any tab is the natural gesture for leaving split view.
+    if (split) setSplitPref(false);
+    onTabChange(tab);
+  };
 
   useEffect(() => {
     setSelectedArtifactId(undefined);
@@ -352,15 +476,28 @@ export function ExchangeDetail({
       <section className="viewer-card">
         <div className="viewer-toolbar">
           <div className="tabs" role="tablist" aria-label="Artifact views">
-            {tabs.map((tab) => <button type="button" role="tab" aria-selected={activeTab === tab.id} className={`tab ${activeTab === tab.id ? "active" : ""}`} key={tab.id} onClick={() => onTabChange(tab.id)}>{tab.label}<small>{tab.description}</small></button>)}
+            {tabs.map((tab) => <button type="button" role="tab" aria-selected={activeTab === tab.id && !split} className={`tab ${activeTab === tab.id && !split ? "active" : ""}`} key={tab.id} onClick={() => handleTabClick(tab.id)}>{tab.label}<small>{tab.description}</small></button>)}
           </div>
-          <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
+          <div className="toolbar-right">
+            <LayoutToggle split={split} splitAvailable={isWide} onSelect={setSplitPref} />
+            <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
+          </div>
         </div>
-        {(activeTab === "raw" || activeTab === "chat_template") && <div className="search-toolbar"><label>Search <input name="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
-        <div className="viewer-body">
-          {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
-          {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} />}
-          {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} />}
+        {(split || activeTab === "raw" || activeTab === "chat_template") && <div className="search-toolbar"><label>Search <input name="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
+        <div className={`viewer-body ${split ? "split-mode" : ""}`} data-split-view={split ? "true" : undefined} ref={splitBodyRef}>
+          {split ? (<>
+            <div className="viewer-pane pane-left" style={{ flexBasis: `${Math.round(paneRatio * 100)}%` }}>
+              <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />
+            </div>
+            <div className="pane-divider" role="separator" aria-orientation="vertical" aria-label="Resize panes" title="Drag to resize" onMouseDown={startPaneResize} />
+            <div className="viewer-pane">
+              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} />
+            </div>
+          </>) : (<>
+            {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
+            {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} />}
+            {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} />}
+          </>)}
         </div>
       </section>
 

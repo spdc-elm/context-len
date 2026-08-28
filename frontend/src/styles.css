@@ -231,6 +231,23 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .viewer-toolbar { flex: 0 0 58px; }
 .search-toolbar { flex: 0 0 auto; }
 .viewer-body { flex: 1 1 auto; min-height: 0; max-height: none; overflow: auto; }
+
+/* Split view: Raw and Chat Template side by side on wide viewports. */
+.viewer-body.split-mode { display: flex; overflow: hidden; }
+.viewer-pane { flex: 1 1 0; min-width: 0; overflow: auto; }
+.viewer-pane.pane-left { flex: 0 0 auto; }
+.pane-divider { position: relative; flex: 0 0 9px; cursor: col-resize; }
+.pane-divider::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px; background: var(--line); transition: background .12s ease; }
+.pane-divider:hover::before { background: var(--accent-strong); }
+body.pane-resizing { cursor: col-resize; user-select: none; }
+body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
+.split-mode .raw-json-tree, .split-mode .chat-template-view { min-width: 0; }
+.toolbar-right { display: flex; align-items: center; gap: 10px; }
+.layout-toggle { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-raised); }
+.layout-option { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); cursor: pointer; }
+.layout-option:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--accent-strong) 12%, transparent); }
+.layout-option.active { color: var(--accent); background: color-mix(in srgb, var(--accent-strong) 16%, transparent); }
+.layout-option:disabled { opacity: .35; cursor: not-allowed; }
 .action-bar { flex: 0 0 auto; margin-top: 10px; }
 .footer-note { display: none; }
 .error-banner { flex: 0 0 auto; }

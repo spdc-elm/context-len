@@ -125,6 +125,7 @@ Chat Template 是连续上下文流，不使用普通聊天产品的左右气泡
 
 - 每个 ChatML 段是一个大块，自带色边框；段内第一层内容直接使用该块对齐（不再嵌套第二条竖线）。
 - 深层嵌套作用域（tools / tool_call / tool_response / think / 内容 XML）用更轻的 1px 纵向缩进线，与顶层大块边框区分层级。
+- 宽视口（宽度与宽高比达标）默认 Raw 与 Chat Template 并排分栏，共享同一 artifact 选择，分隔条可拖动（20%–80%）；点击任一 Tab 退出分栏，`\` 快捷键切换；窄视口自动回退单栏。用户显式选择持久化；分栏是纯显示投影，不改变 artifact 语义。
 
 ```text
 system/developer  muted blue-gray
