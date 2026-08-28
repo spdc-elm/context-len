@@ -8,9 +8,8 @@ import type {
 } from "../contracts";
 import { formatWorkspaceTime } from "../time";
 import type { DetailTab, LoadedArtifact } from "../workspaceState";
-import { normalizeContext } from "../contextIr";
-import { QWEN_CHAT_TEMPLATE_NAME, renderQwenBlocks } from "../qwenChatTemplate";
 import RawJsonTree from "./RawJsonTree";
+import ChatTemplateView from "./ChatTemplateView";
 
 export type OperatorAction =
   | "forward_unchanged"
@@ -206,27 +205,6 @@ function ProjectionBody({ exchange, tab, body, artifact }: { exchange: ExchangeS
   );
 }
 
-function ChatTemplateBody({ protocol, body, artifact }: { protocol: string; body?: string; artifact?: ArtifactRef }) {
-  if (body === undefined) return <div className="body-placeholder">Load an artifact to render the derived Qwen ChatML context.</div>;
-  if (artifact?.content_type.includes("event-stream") || /^\s*(?:event|data|id|retry):/m.test(body)) {
-    return <section className="chat-template-view" aria-label={QWEN_CHAT_TEMPLATE_NAME} data-chat-template="qwen-chatml"><div className="chat-template-heading"><strong>{QWEN_CHAT_TEMPLATE_NAME}</strong><span>SSE response · open SSE for raw events</span></div><div className="body-placeholder">This response artifact is an SSE stream. Its typed Chat Template delta projection is part of the SSE phase.</div></section>;
-  }
-  const document = normalizeContext(protocol, body);
-  const rendered = renderQwenBlocks(document);
-  return (
-    <section className="chat-template-view" aria-label={QWEN_CHAT_TEMPLATE_NAME} data-chat-template="qwen-chatml">
-      <div className="chat-template-heading"><strong>{QWEN_CHAT_TEMPLATE_NAME}</strong><span>{document.blocks.length} blocks</span></div>
-      {document.warnings.length > 0 && <div className="warning-box">{document.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
-      <div className="chat-template-stream">
-        {rendered.map(({ block: item, text }) => <article className={`chat-template-block chat-template-${item.kind}`} data-context-block="true" data-source-json-pointer={item.sourcePointer} key={item.id}>
-          <div className="chat-template-block-meta"><span>{item.kind}</span><code>{item.sourcePointer || "/"}</code></div>
-          <pre>{text}</pre>
-        </article>)}
-      </div>
-    </section>
-  );
-}
-
 function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies, bodyLoading, onDownloadBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "loadedBodies" | "bodyLoading" | "onDownloadBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
   if (!exchange) return null;
   const refs = allArtifacts(exchange);
@@ -381,7 +359,7 @@ export function ExchangeDetail({
         {(activeTab === "raw" || activeTab === "chat_template") && <div className="search-toolbar"><label>Search <input name="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
         <div className="viewer-body">
           {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
-          {activeTab === "chat_template" && <ChatTemplateBody protocol={String(exchange.protocol)} body={body} artifact={artifact} />}
+          {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} />}
           {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} />}
         </div>
       </section>

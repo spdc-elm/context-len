@@ -270,7 +270,11 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .raw-json-array-count { padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--accent); font-size: 10px; }
 .raw-json-node.match > .raw-json-node-row { border-left: 2px solid var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
 .raw-json-node mark { color: var(--text); background: #facc15; }
-.raw-json-long-string { margin: 4px 0 8px 33px; padding: 8px 10px; border-left: 2px solid var(--line-bright); color: var(--subtle); white-space: pre-wrap; word-break: break-word; }
+.raw-json-long-string { margin: 4px 0 8px 24px; padding: 8px 10px; border-left: 2px solid var(--line-bright); color: var(--subtle); white-space: pre-wrap; word-break: break-word; }
+.raw-json-node-toggle { display: inline-flex; align-items: center; justify-content: center; width: 14px; min-height: 14px; padding: 0; border: 0; background: transparent; color: var(--muted); opacity: .55; cursor: pointer; }
+.raw-json-node-toggle:hover { opacity: 1; color: var(--accent); }
+.chevron { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--muted); opacity: .55; cursor: pointer; }
+.chevron:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent-strong) 12%, transparent); }
 .raw-json-tree-fallback { padding: 16px 0; }
 .raw-json-tree-fallback-note { color: var(--warning); font-size: 11px; }
 .raw-json-tree-fallback pre { margin: 10px 0 0; color: var(--subtle); white-space: pre-wrap; word-break: break-word; }
@@ -278,21 +282,46 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .chat-template-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-bottom: 10px; color: var(--accent); font-size: 12px; }
 .chat-template-heading span { color: var(--muted); font-size: 10px; }
 .chat-template-stream { border-top: 1px solid var(--line); }
-.chat-template-block { margin: 0; padding: 12px 10px 14px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--line-bright); background: transparent; }
-.chat-template-block-meta { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
-.chat-template-block-meta code { color: var(--muted); text-transform: none; letter-spacing: 0; }
-.chat-template-block pre { margin: 0; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.ctx-tag { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; }
+.ctx-tag.ctx-block { margin: 0; padding: 10px 10px 12px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--line-bright); background: transparent; }
+.ctx-tag-line { display: flex; align-items: center; gap: 6px; min-height: 20px; }
+.ctx-marker { color: var(--accent); font-weight: 600; font-size: 11px; }
+.ctx-inner-tag { color: var(--warning); font-weight: 600; font-size: 11px; }
+.ctx-tag[data-ctx-tag="think"] .ctx-inner-tag { color: #a78bca; }
+.ctx-ellipsis { color: var(--muted); font-size: 11px; }
+.ctx-chevron-spacer { display: inline-block; width: 14px; flex: 0 0 14px; }
+.ctx-tag-body { margin-left: 7px; padding-left: 11px; border-left: 1px solid var(--line); }
+.ctx-text { margin: 2px 0; padding: 3px 0; color: var(--subtle); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.ctx-json { margin: 2px 0; }
+.ctx-json-head, .ctx-json-inline { display: inline-flex; align-items: center; gap: 6px; }
+.ctx-json-brace { color: var(--muted); font-size: 11px; }
+.ctx-json-children { margin-left: 20px; }
+.ctx-json-row { display: flex; align-items: baseline; gap: 6px; min-height: 19px; }
+.ctx-json-key { color: var(--accent); font-size: 11px; }
+.ctx-json-leaf { color: var(--subtle); font-size: 11px; }
+.ctx-json-string { color: #9dd3a8; }
+.ctx-json-number { color: #e0b578; }
+.ctx-json-boolean { color: #b8a3e3; }
+.ctx-json-null { color: var(--muted); font-style: italic; }
+.ctx-json-close { min-height: 19px; display: flex; align-items: center; }
 .chat-template-system, .chat-template-developer { border-left-color: #7890a8; background: color-mix(in srgb, #7890a8 6%, transparent); }
 .chat-template-user { border-left-color: #6aa6df; background: color-mix(in srgb, #6aa6df 6%, transparent); }
 .chat-template-assistant { border-left-color: #67b98f; background: color-mix(in srgb, #67b98f 6%, transparent); }
 .chat-template-reasoning, .chat-template-thinking { border-left-color: #a78bca; background: color-mix(in srgb, #a78bca 6%, transparent); }
 .chat-template-tool_call { border-left-color: #d39b4b; background: color-mix(in srgb, #d39b4b 7%, transparent); }
+.chat-template-tool_definition { border-left-color: #d39b4b; background: color-mix(in srgb, #d39b4b 5%, transparent); }
 .chat-template-tool_result { border-left-color: #c27d65; background: color-mix(in srgb, #c27d65 7%, transparent); }
 .chat-template-unknown { border-left-style: dashed; }
-.theme-light .raw-json-node-summary, .theme-light .raw-json-node-pointer, .theme-light .chat-template-block-meta code { color: #64748b; }
+.theme-light .ctx-marker { color: #176b52; }
+.theme-light .ctx-inner-tag { color: #a66a00; }
+.theme-light .ctx-tag[data-ctx-tag="think"] .ctx-inner-tag { color: #7c5cd6; }
+.theme-light .ctx-json-string { color: #2f7d4f; }
+.theme-light .ctx-json-number { color: #9a6700; }
+.theme-light .ctx-json-boolean { color: #7c5cd6; }
+.theme-light .raw-json-node-summary, .theme-light .raw-json-node-pointer { color: #64748b; }
 .theme-light .raw-json-node-label, .theme-light .chat-template-heading { color: #176b52; }
 .theme-light .raw-json-tree, .theme-light .chat-template-view { color: #263449; }
-.theme-light .chat-template-block pre, .theme-light .raw-json-long-string, .theme-light .raw-json-tree-fallback pre { color: #334155; }
+.theme-light .ctx-text, .theme-light .raw-json-long-string, .theme-light .raw-json-tree-fallback pre { color: #334155; }
 @media (max-width: 620px) {
   .raw-json-tree, .chat-template-view { min-width: 0; padding-left: 10px; padding-right: 10px; }
   .raw-json-node-pointer { display: none; }

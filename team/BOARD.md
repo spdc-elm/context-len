@@ -10,7 +10,7 @@
 |---|---|---|---|
 | P0 contract / docs freeze | verified | 旧 team 已归档；本 charter、board、Chat Template spec 与 runtime/protocol 接缝一致 | manager |
 | P1 Raw Tree | in_review | Three-protocol JSON/raw fixtures render as structured tree with semantic counts, message/tool summaries, search auto-expand/highlight, controls, source pointers, and plain-text fallback; `frontend/test/RawJsonTree.test.tsx` 7 passing | manager + Raw Tree worker | IR contract |
-| P2 Chat Template | in_review | Three-protocol checked-in JSON fixtures normalize to loss-aware Context IR and render continuous Qwen marker blocks with tools/reasoning/unknown/source pointers; `frontend/test/contextIr.test.ts`, `frontend/test/qwenChatTemplate.test.ts` 8 passing | manager + IR/Qwen worker | IR contract |
+| P2 Chat Template | in_review | Three-protocol checked-in JSON fixtures normalize to loss-aware Context IR and render nested collapsible Qwen marker blocks (inner tool tags, collapsible JSON, thinking collapsed by default) with tools/reasoning/unknown/source pointers; `frontend/test/contextIr.test.ts`, `frontend/test/qwenChatTemplate.test.ts`, `frontend/test/ChatTemplateView.test.ts` 13 passing | manager + IR/Qwen worker | IR contract |
 | P1/P2 joint acceptance | awaiting_leader | Browser screenshots `/tmp/context-lens-phase1-final.png`, `/tmp/context-lens-phase1-chat.png`, `/tmp/context-lens-responses-json-response-chat.png`, `/tmp/context-lens-anthropic-json-response-chat.png`, `/tmp/context-lens-phase1-sse-guard-chat.png`; controlled Chrome shows Raw Tree and Qwen view for all three protocols plus JSON response reasoning/tool/unknown blocks; exact artifact hashes remain visible. `evaluate_script` reports `bodyOverflow=hidden`, `shellOverflow=hidden`, one `.viewer-body` scroller (`overflow=auto`); local network and console are clean | leader | P1 + P2 |
 | P3 SSE IR delta | planned | 三协议 SSE 事件归一为 typed delta；原始事件保留；未知事件 passthrough | manager |
 | P4 realtime renderer | planned | assistant/reasoning/tool call/tool result 增量渲染及 completed/failed/cancelled | manager |
@@ -82,6 +82,7 @@ protocol SSE bytes (copy only for inspection)
 - Chat Template 是连续上下文流，不是普通聊天气泡；UI 只显示模板名称。
 - SSE 是 MVP 内能力，但放在 P1/P2 联合验收之后；不作为常驻主阅读 Tab。
 - Qwen tool ordering was verified against official Qwen2.5/Qwen3 templates: tool definitions are injected into the initial system segment before messages; tool results use a user segment. The renderer was corrected accordingly. Human-readable JSON whitespace remains a display choice, not a token-exact claim.
+- Chat Template renders as a nested collapsible structure: ChatML segments contain inner tool tags and collapsible JSON; thinking blocks default collapsed. Expand/collapse chevrons in both Chat Template and Raw Tree are subtle borderless SVG triangles that blend into the background (0 border, transparent background, opacity .55, accent on hover).
 - provider extension / passthrough / unknown / source pointer 从第一版预留。
 - request/response artifact 自动按需加载；原始 artifact immutable。
 

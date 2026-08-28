@@ -90,7 +90,7 @@ const rowStyle: CSSProperties = {
 };
 
 const childrenStyle: CSSProperties = {
-  marginLeft: "19px",
+  marginLeft: "14px",
   borderLeft: "1px solid var(--line, #273142)",
   paddingLeft: "10px",
 };
@@ -427,14 +427,22 @@ function TreeNodeView({ node, query, matches, autoExpanded, overrides, onToggle 
           <button
             type="button"
             className="raw-json-node-toggle"
-            style={{ ...controlButtonStyle, width: "23px", minHeight: "22px", padding: 0, lineHeight: 1 }}
             aria-label={toggleLabel}
             title={toggleLabel}
             onClick={() => onToggle(node.pointer, !expanded)}
           >
-            {expanded ? "▾" : "▸"}
+            <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true" focusable="false">
+              <path
+                d={expanded ? "M1.5 3 L4 5.5 L6.5 3" : "M2.5 1.5 L5.5 4 L2.5 6.5"}
+                stroke="currentColor"
+                strokeWidth="1.3"
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
-        ) : <span aria-hidden="true" style={{ display: "inline-block", width: "23px" }} />}
+        ) : <span aria-hidden="true" style={{ display: "inline-block", width: "14px" }} />}
         <span className="raw-json-node-label" data-node-label="true">{keyText}</span>
         <span className="raw-json-node-summary" data-node-summary="true">{summaryText}</span>
         {node.isSemanticArray && <span className="raw-json-array-count" data-array-count="true">{node.children.length} {node.children.length === 1 ? "item" : "items"}</span>}
