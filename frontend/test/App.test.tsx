@@ -57,14 +57,11 @@ describe("workbench shell", () => {
     expect((rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement).value).toBe(responseOption!.value);
   });
 
-  it("loads an artifact only after the operator asks, keeping Raw view explicit", async () => {
+  it("loads the selected artifact automatically", async () => {
     const rendered = await renderApp();
-    const loadButton = [...rendered.querySelectorAll("button")].find((button) => button.textContent?.includes("Load body"));
-    expect(loadButton).toBeDefined();
-    await act(async () => {
-      loadButton?.click();
-      await Promise.resolve();
-    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(rendered.querySelector('[aria-label="Raw artifact body"]')?.textContent).toContain('"model"');
+    expect(rendered.textContent).not.toContain("Load body");
+    expect(rendered.textContent).not.toContain("Reload");
   });
 });

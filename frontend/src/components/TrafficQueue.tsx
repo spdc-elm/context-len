@@ -1,4 +1,5 @@
 import type { ExchangeSnapshot } from "../contracts";
+import { formatWorkspaceTime } from "../time";
 
 interface TrafficQueueProps {
   exchanges: ExchangeSnapshot[];
@@ -64,7 +65,7 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
             <div className="traffic-row-path">{requestPath(exchange)}</div>
             <div className="traffic-row-meta">
               <span>{exchange.exchange_id}</span>
-              <span>r{exchange.updated_at.slice(11, 19)}</span>
+              <span>{formatWorkspaceTime(exchange.updated_at)}</span>
             </div>
           </button>
         ))}

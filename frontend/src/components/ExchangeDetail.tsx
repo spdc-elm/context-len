@@ -6,6 +6,7 @@ import type {
   MutationInput,
   Protocol,
 } from "../contracts";
+import { formatWorkspaceTime } from "../time";
 import type { DetailTab, LoadedArtifact } from "../workspaceState";
 
 export type OperatorAction =
@@ -245,7 +246,7 @@ function ProjectionBody({ exchange, tab, body, artifact }: { exchange: ExchangeS
   );
 }
 
-function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies, bodyLoading, onLoadBody, onDownloadBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "loadedBodies" | "bodyLoading" | "onLoadBody" | "onDownloadBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
+function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies, bodyLoading, onDownloadBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "loadedBodies" | "bodyLoading" | "onDownloadBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
   if (!exchange) return null;
   const refs = allArtifacts(exchange);
   const preferred = artifactForTab(exchange, activeTab, selectedArtifactId);
@@ -256,14 +257,13 @@ function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies,
         const ref = refs.find((artifact) => artifact.artifact_id === event.target.value);
         if (ref) {
           onArtifactSelect(ref.artifact_id);
-          onLoadBody(ref);
         }
       }}>
         {refs.length === 0 && <option value="">No artifacts</option>}
         {refs.map((artifact) => <option value={artifact.artifact_id} key={artifact.artifact_id}>{artifact.stage} · {artifact.size.toLocaleString()} B{artifact.complete ? "" : " · incomplete"}</option>)}
       </select>
       {preferred && <>
-        <button type="button" className="button quiet" onClick={() => onLoadBody(preferred)} disabled={bodyLoading}>{bodyLoading ? "Loading…" : loadedBodies[preferred.artifact_id] ? "Reload" : "Load body"}</button>
+        <span className="artifact-load-status">{bodyLoading ? "Loading…" : loadedBodies[preferred.artifact_id] ? "Loaded" : "Waiting…"}</span>
         <button type="button" className="button quiet" onClick={() => onDownloadBody(preferred)} disabled={bodyLoading} aria-label={`Download ${preferred.artifact_id}`}>Download</button>
       </>}
     </div>
@@ -329,6 +329,11 @@ export function ExchangeDetail({
 
   const artifact = artifactForTab(exchange, activeTab, selectedArtifactId);
   const body = bodyFor(artifact, loadedBodies);
+
+  useEffect(() => {
+    if (artifact && !loadedBodies[artifact.artifact_id] && !bodyLoading) onLoadBody(artifact);
+  }, [artifact?.artifact_id, bodyLoading, loadedBodies, onLoadBody]);
+
   const editorArtifact = exchange && editorMode ? actionArtifactFor(exchange, editorMode) : undefined;
   const editorBody = bodyFor(editorArtifact, loadedBodies);
 
@@ -384,7 +389,7 @@ export function ExchangeDetail({
         <div><span>status</span><strong>{exchange.response.envelope.status || "—"}</strong></div>
         <div><span>request gate</span><strong>{exchange.policy.request_gate}</strong></div>
         <div><span>response gate</span><strong>{exchange.policy.response_gate}</strong></div>
-        <div><span>updated</span><strong>{new Date(exchange.updated_at).toLocaleTimeString()}</strong></div>
+        <div><span>updated</span><strong>{formatWorkspaceTime(exchange.updated_at)} UTC+8</strong></div>
       </section>
 
       <section className="viewer-card">
@@ -392,7 +397,7 @@ export function ExchangeDetail({
           <div className="tabs" role="tablist" aria-label="Artifact views">
             {tabs.map((tab) => <button type="button" role="tab" aria-selected={activeTab === tab.id} className={`tab ${activeTab === tab.id ? "active" : ""}`} key={tab.id} onClick={() => onTabChange(tab.id)}>{tab.label}<small>{tab.description}</small></button>)}
           </div>
-          <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onLoadBody={onLoadBody} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
+          <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
         </div>
         {(activeTab === "raw" || activeTab === "pretty") && <div className="search-toolbar"><label>Search <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in body" /></label><label>JSON path <input value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} placeholder="$.messages[0]" /></label>{artifact && <span className="hash-chip">sha256 {artifact.sha256.slice(0, 16)}…</span>}</div>}
         <div className="viewer-body">
