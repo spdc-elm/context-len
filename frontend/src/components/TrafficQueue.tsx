@@ -27,6 +27,12 @@ function requestPath(exchange: ExchangeSnapshot): string {
 }
 
 export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false, onToggle, onSelect }: TrafficQueueProps) {
+  const orderedExchanges = [...exchanges].sort((left, right) => {
+    const rightTime = Date.parse(right.updated_at);
+    const leftTime = Date.parse(left.updated_at);
+    if (rightTime !== leftTime) return rightTime - leftTime;
+    return right.exchange_id.localeCompare(left.exchange_id);
+  });
   return (
     <aside className={`traffic-panel ${collapsed ? "collapsed" : ""}`} aria-label="Traffic queue">
       <div className="panel-heading">
@@ -39,9 +45,9 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
       {!collapsed && <>
         <p className="panel-note">Live local workspace · events in realtime; bodies load on demand</p>
       <div className="traffic-list" role="listbox" aria-label="Exchanges">
-        {exchanges.length === 0 ? (
+        {orderedExchanges.length === 0 ? (
           <div className="empty-state">Waiting for an exchange…</div>
-        ) : exchanges.map((exchange) => (
+        ) : orderedExchanges.map((exchange) => (
           <button
             type="button"
             role="option"
