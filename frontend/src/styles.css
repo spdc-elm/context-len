@@ -199,7 +199,12 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .theme-light .mutation-editor textarea { color: #263449; background: #fff; }
 .theme-light .projection-view, .theme-light .event-list pre { color: #334155; }
 .theme-light .event-list code { color: #176b52; }
-.theme-light .status-completed { color: #176b52; background: #e5f5ee; }
+.theme-light .status-completed, .theme-light .state-completed { border-color: #7fc5a6; color: #08724f; background: #dff5e9; }
+.theme-light .state-request_held, .theme-light .state-response_held { border-color: #d4ad5e; color: #805400; background: #fff5d9; }
+.theme-light .switch { border-color: #b9c5d2; background: #e8edf3; }
+.theme-light .switch span { background: #728198; }
+.theme-light .switch.on { border-color: #76b89f; background: #d9f1e7; }
+.theme-light .switch.on span { background: #147453; }
 .theme-dark { --bg: #0b0d12; --surface: #121620; --surface-raised: #181e2a; --line: #273142; --line-bright: #354157; --muted: #8791a5; --text: #e5e7eb; --subtle: #b0bacb; --accent: #a7f3d0; --accent-strong: #34d399; --warning: #fbbf24; --danger: #fb7185; color: var(--text); }
 .topbar { flex: 0 0 68px; }
 .topbar-tools { display: flex; align-items: center; gap: 20px; }
