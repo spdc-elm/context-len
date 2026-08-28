@@ -37,6 +37,19 @@ describe("workbench shell", () => {
     expect(rendered.querySelector('[role="tab"]')).not.toBeNull();
   });
 
+  it("renders an intentional ready state before the first exchange", async () => {
+    class EmptyWorkspaceApi extends MockWorkspaceApi {
+      override async listExchanges(): Promise<never[]> {
+        return [];
+      }
+    }
+    const rendered = await renderApp(new EmptyWorkspaceApi());
+    expect(rendered.querySelector(".empty-detail-grid")).not.toBeNull();
+    expect(rendered.querySelector(".empty-detail-hero h1")?.textContent).toBe("See what your model sees.");
+    expect(rendered.querySelector(".empty-detail-status-card h2")?.textContent).toContain("Waiting for your first request");
+    expect(rendered.querySelector(".empty-detail-flow")).not.toBeNull();
+  });
+
   it("keeps the selected artifact when switching views", async () => {
     const rendered = await renderApp();
     const picker = rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement;

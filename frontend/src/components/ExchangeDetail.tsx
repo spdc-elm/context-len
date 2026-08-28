@@ -427,7 +427,36 @@ export function ExchangeDetail({
   }, [editorBody, editorDirty, editorMode, editorText, exchange?.protocol]);
 
   if (!exchange) {
-    return <main className="detail-panel empty-detail"><div className="empty-detail-icon">⌁</div><h2>Choose an exchange</h2><p>Traffic captured by the proxy will appear here. Select a row to inspect its immutable artifacts.</p></main>;
+    return (
+      <main className="detail-panel empty-detail" aria-label="Empty workspace">
+        <div className="empty-detail-grid">
+          <section className="empty-detail-hero">
+            <div className="empty-detail-kicker"><span className="empty-detail-kicker-line" /> WORKSPACE READY</div>
+            <h1>See what your model sees.</h1>
+            <p className="empty-detail-lede">Send a request through the local proxy and watch the complete context come into focus — wire bytes, gates, templates, and the stream in between.</p>
+            <div className="empty-detail-flow" aria-label="Inspection workflow">
+              <div className="empty-detail-step"><span>01</span><strong>Capture</strong><small>preserve the wire</small></div>
+              <div className="empty-detail-flow-line" aria-hidden="true" />
+              <div className="empty-detail-step"><span>02</span><strong>Gate</strong><small>decide explicitly</small></div>
+              <div className="empty-detail-flow-line" aria-hidden="true" />
+              <div className="empty-detail-step"><span>03</span><strong>Inspect</strong><small>read the context</small></div>
+            </div>
+            <div className="empty-detail-capabilities"><span>RAW BYTES</span><span>QWEN CHATML</span><span>SSE DELTAS</span></div>
+          </section>
+          <aside className="empty-detail-aside">
+            <div className="empty-detail-status-card">
+              <div className="empty-detail-status-top"><span className="empty-detail-listening"><i className="live-dot" /> LOCAL API</span><span className="empty-detail-status-label">LISTENING</span></div>
+              <div className="empty-detail-radar" aria-hidden="true"><span /><span /><span /><b>⌁</b></div>
+              <p className="empty-detail-status-eyebrow">NO TRAFFIC YET</p>
+              <h2>Waiting for your first request</h2>
+              <p>Everything is ready. The next request captured by the proxy will appear here.</p>
+              <div className="empty-detail-route"><span className="empty-detail-route-method">POST</span><code>/v1/responses</code><span className="empty-detail-route-dot" /></div>
+            </div>
+            <div className="empty-detail-note"><span className="empty-detail-note-icon">⌘</span><div><strong>Operator-first by design</strong><p>Nothing is forwarded, edited, or released without an explicit decision.</p></div></div>
+          </aside>
+        </div>
+      </main>
+    );
   }
 
   const canRequestAction = exchange.state === "request_held";
