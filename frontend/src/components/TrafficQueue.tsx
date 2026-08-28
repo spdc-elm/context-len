@@ -34,7 +34,6 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
           <p className="eyebrow">LIVE TRAFFIC</p>
           <h2>Exchange queue</h2>
         </div>}
-        <span className="count-badge" aria-label={`${exchanges.length} exchanges`}>{exchanges.length}</span>
         <button type="button" className="collapse-button" aria-label={collapsed ? "Expand traffic" : "Collapse traffic"} onClick={onToggle}>{collapsed ? "›" : "‹"}</button>
       </div>
       {!collapsed && <>

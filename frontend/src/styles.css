@@ -52,7 +52,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .traffic-panel { min-height: 0; border-right: 1px solid var(--line); background: #0f131b; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding: 21px 19px 7px; }
 .panel-heading h2 { margin: 5px 0 0; color: #f2f4f8; font-size: 16px; letter-spacing: -.02em; }
-.count-badge { display: grid; place-items: center; min-width: 24px; height: 22px; padding: 0 7px; border: 1px solid #325348; border-radius: 12px; color: var(--accent); background: #14271f; font-size: 11px; }
 .panel-note { margin: 0 19px 13px; }
 .traffic-list { padding: 0 9px 18px; }
 .traffic-row { width: 100%; display: block; padding: 13px 11px 11px; border: 1px solid transparent; border-radius: 8px; color: inherit; text-align: left; background: transparent; }
@@ -219,7 +218,6 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .workspace-grid.sidebar-collapsed { grid-template-columns: 58px minmax(0, 1fr); }
 .traffic-panel { height: 100%; overflow-x: hidden; overflow-y: auto; }
 .traffic-panel.collapsed .panel-heading { justify-content: center; flex-direction: column; gap: 12px; padding: 16px 8px; }
-.traffic-panel.collapsed .count-badge { min-width: 30px; }
 .collapse-button { width: 25px; height: 25px; padding: 0; color: var(--muted); font-size: 18px; line-height: 1; }
 .traffic-panel:not(.collapsed) .collapse-button { margin-left: auto; }
 .detail-panel { height: 100%; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 16px 22px 12px; }
