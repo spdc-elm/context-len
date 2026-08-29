@@ -29,3 +29,4 @@ tmp/
 
 config.local.json
 .context-lens-run/
+team/
