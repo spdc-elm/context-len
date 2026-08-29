@@ -43,7 +43,7 @@ The process can optionally require a separate client API key for `/v1/*` proxy r
 }
 ```
 
-Accepted request headers are the standard credentials clients already use: `Authorization: Bearer <client key>`, `X-API-Key`, and `API-Key`. No context-lens-specific client header is required. The client key is checked before request-body capture, is never forwarded to upstream, and is redacted from workspace projections. `GET /healthz` remains public for readiness checks; `/api` remains a loopback workspace surface. The existing top-level `api_key` is independent and is only the server-side upstream credential.
+Accepted request headers are the standard credentials clients already use: `Authorization: Bearer <client key>`, `X-API-Key`, and `API-Key`. No context-lens-specific client header is required. The client key is checked before request-body capture. In `configured` upstream mode it is removed before forwarding; in `passthrough` mode it is the provider credential and is forwarded by definition. In both modes it is redacted from workspace projections. `GET /healthz` remains public for readiness checks; `/api` remains a loopback workspace surface. The existing top-level `api_key` is independent and is only the server-side upstream credential.
 
 ## Upstream authentication mode
 

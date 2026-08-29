@@ -217,8 +217,10 @@ start/end timestamps
 
 ## Header 和 credential 规则
 
-- context-lens 用于入站认证的 Authorization / x-api-key 默认不发送到 upstream。
-- upstream profile 的 credential 在服务端注入，UI 只收到 configured 状态和 profile 元数据。
+- `client_auth` 是可选的 context-lens 访问门禁，只识别客户端本来就会发送的标准 `Authorization: Bearer`、`X-API-Key` 和 `API-Key`；不要求 provider/harness 适配自定义 header。
+- `upstream_auth_mode=passthrough` 时保留 harness 发来的 provider authentication header，支持只改 base URL 的纯透明接入。
+- `upstream_auth_mode=configured` 时移除 inbound credential headers，并在服务端注入 configured upstream credential。必要的认证替换必须以可解释的方式出现在观察警告和 fidelity 说明中。
+- `/healthz` 保持公开；workspace `/api` 是 loopback workbench surface；client auth 保护 `/v1/*` proxy surface。未经认证的请求不得进入 body capture。
 - `anthropic-version`、Anthropic beta header、OpenAI 相关协议 header 和合法 tracing header 按 header policy 转发。
 - `Connection`、`Transfer-Encoding`、`Keep-Alive`、`Proxy-Authenticate`、`Proxy-Authorization` 等 hop-by-hop header 不盲目复制。
 - header 名称和值必须拒绝 CRLF 注入。
