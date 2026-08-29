@@ -16,11 +16,55 @@ import (
 // local launcher. APIKey is read only by the server process and is never
 // included in diagnostics, workspace DTOs, or error messages.
 //
-// The checked-in example and the local file use exactly these two fields:
-// base_url and api_key.
+// ClientAuth is separate from APIKey: APIKey authenticates to the upstream,
+// while ClientAuth.APIKey optionally authenticates callers connecting to the
+// local proxy.
 type RuntimeConfig struct {
-	BaseURL string `json:"base_url"`
-	APIKey  string `json:"api_key"`
+	BaseURL          string           `json:"base_url"`
+	APIKey           string           `json:"api_key"`
+	UpstreamAuthMode string           `json:"upstream_auth_mode,omitempty"`
+	ClientAuth       ClientAuthConfig `json:"client_auth,omitempty"`
+}
+
+// EffectiveUpstreamAuthMode returns the explicit mode, or preserves the
+// legacy behaviour: a configured top-level api_key means server-side
+// credential injection; an empty api_key means transparent pass-through.
+func (c RuntimeConfig) EffectiveUpstreamAuthMode() string {
+	if c.UpstreamAuthMode != "" {
+		return c.UpstreamAuthMode
+	}
+	if c.APIKey != "" {
+		return "configured"
+	}
+	return "passthrough"
+}
+
+// ClientAuthConfig controls optional access authentication for /v1 proxy
+// routes. Its API key is never included in RuntimeConfig summaries or events.
+type ClientAuthConfig struct {
+	Enabled bool   `json:"enabled"`
+	APIKey  string `json:"api_key,omitempty"`
+}
+
+func (c ClientAuthConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(c.APIKey) == "" {
+		return errors.New("config: client_auth.api_key is required when client_auth.enabled is true")
+	}
+	if strings.TrimSpace(c.APIKey) != c.APIKey {
+		return errors.New("config: client_auth.api_key must not have surrounding whitespace")
+	}
+	if strings.ContainsAny(c.APIKey, "\r\n") {
+		return errors.New("config: client_auth.api_key contains CRLF")
+	}
+	for _, r := range c.APIKey {
+		if unicode.IsControl(r) {
+			return errors.New("config: client_auth.api_key contains a control character")
+		}
+	}
+	return nil
 }
 
 // DefaultRuntimeConfig points at the repository's local mock upstream. It is
@@ -99,6 +143,19 @@ func (c RuntimeConfig) Validate() error {
 		if unicode.IsControl(r) {
 			return errors.New("config: api_key contains a control character")
 		}
+	}
+	if err := c.ClientAuth.Validate(); err != nil {
+		return err
+	}
+	mode := c.EffectiveUpstreamAuthMode()
+	if mode != "passthrough" && mode != "configured" {
+		return errors.New("config: upstream_auth_mode must be passthrough or configured")
+	}
+	if mode == "configured" && strings.TrimSpace(c.APIKey) == "" {
+		return errors.New("config: api_key is required when upstream_auth_mode is configured")
+	}
+	if mode == "passthrough" && c.APIKey != "" {
+		return errors.New("config: api_key must be empty when upstream_auth_mode is passthrough")
 	}
 	return nil
 }

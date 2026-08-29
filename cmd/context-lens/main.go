@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"context-lens/backend/app"
+	"context-lens/backend/auth"
 	"context-lens/backend/config"
 	"context-lens/backend/gateway"
 	"context-lens/backend/persistence"
@@ -25,7 +26,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", configuredAddr(), "HTTP listen address")
-	configPath := flag.String("config", configuredConfigPath(), "JSON runtime config path (base_url and api_key)")
+	configPath := flag.String("config", configuredConfigPath(), "JSON runtime config path (upstream and optional client auth)")
 	flag.Parse()
 	if err := validateListenAddr(*addr); err != nil {
 		log.Fatalf("invalid listen address: %v", err)
@@ -49,9 +50,16 @@ func main() {
 	}
 	if upstream != "" {
 		var err error
-		transportConfig := transport.Config{BaseURLString: upstream, HeaderPolicy: transport.DefaultHeaderPolicy()}
-		bearer := fileConfig.APIKey
+		serverCredentialConfigured := fileConfig.EffectiveUpstreamAuthMode() == "configured"
+		transportConfig := transport.Config{
+			BaseURLString: upstream,
+			HeaderPolicy:  transport.HeaderPolicy{ForwardInboundCredentials: !serverCredentialConfigured},
+		}
+		bearer := ""
 		apiKey := ""
+		if serverCredentialConfigured {
+			bearer = fileConfig.APIKey
+		}
 		if bearer == "" {
 			bearer = strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM_BEARER"))
 			apiKey = strings.TrimSpace(os.Getenv("CONTEXT_LENS_UPSTREAM_API_KEY"))
@@ -61,12 +69,15 @@ func main() {
 		}
 		if bearer != "" {
 			transportConfig.HeaderPolicy.Additional = http.Header{"Authorization": {"Bearer " + bearer}}
+			transportConfig.HeaderPolicy.ForwardInboundCredentials = false
 		}
 		if apiKey != "" {
 			transportConfig.HeaderPolicy.Additional = http.Header{"X-API-Key": {apiKey}}
+			transportConfig.HeaderPolicy.ForwardInboundCredentials = false
 		}
 		gatewayServer, err = gateway.New(gateway.Config{
 			Transport:        transportConfig,
+			ClientAuth:       auth.Config{Enabled: fileConfig.ClientAuth.Enabled, APIKey: fileConfig.ClientAuth.APIKey},
 			AllowNonLoopback: os.Getenv("CONTEXT_LENS_ALLOW_NON_LOOPBACK") == "1",
 			MaxBodyBytes:     128 << 20,
 			StoreConfig: persistence.Config{

@@ -21,16 +21,23 @@ cd /Users/littlefairy/projects/context-lens
 
 脚本会自动启动本地 mock upstream、Go gateway、workspace API 和 Vite 工作台，并在 macOS 上打开浏览器。按 `Ctrl-C` 会停止本轮启动的进程。运行日志只写入被忽略的 `.context-lens-run/` 目录。
 
-首次启动会从 [`config.example.json`](config.example.json) 创建未跟踪的 `config.local.json`，并设置为仅当前用户可读。实际运行配置只有两个字段：
+首次启动会从 [`config.example.json`](config.example.json) 创建未跟踪的 `config.local.json`，并设置为仅当前用户可读。运行配置至少包含 upstream 的 `base_url` / `api_key`，也可以用可选的 `client_auth` 保护发往 context-lens `/v1/*` 的连接：
 
 ```json
 {
   "base_url": "http://127.0.0.1:19091",
-  "api_key": ""
+  "api_key": "",
+  "upstream_auth_mode": "passthrough",
+  "client_auth": {
+    "enabled": false,
+    "api_key": ""
+  }
 }
 ```
 
-`api_key` 只在 Go 进程内读取，并按 `Authorization: Bearer <api_key>` 注入上游，不会进入 workspace snapshot、SSE、日志或前端。默认 `base_url` 指向仓库内的 mock upstream。若改成非 loopback 地址，默认会拒绝；只有明确设置 `CONTEXT_LENS_ALLOW_NON_LOOPBACK=1` 才允许启动外部 upstream。
+`client_auth.api_key` 是访问 context-lens 的客户端 key，与 upstream 的认证完全分开。启用后，发往 `/v1/*` 的请求需要使用客户端本来就会发送的标准认证方式：`Authorization: Bearer <client key>`、`X-API-Key: <client key>` 或 `API-Key: <client key>`；不需要适配 context-lens 专用 header。错误响应不会泄露 key。`/healthz` 保持公开，便于探活；workspace `/api` 默认仍只通过 loopback 使用。
+
+upstream 认证有两种模式：`upstream_auth_mode: "passthrough"` 时保留 harness 发来的认证 header，适合只改 base URL 的纯透明接入；`upstream_auth_mode: "configured"` 时移除客户端认证并使用配置中的 top-level `api_key` 作为 upstream credential。为兼容旧配置，省略该字段时，非空 `api_key` 自动采用 `configured`，空 `api_key` 自动采用 `passthrough`。upstream 的 credential 只在 Go 进程内处理，不进入 workspace snapshot、SSE、日志或前端 payload。端口不放在这个包含凭据的文件里，使用 `CONTEXT_LENS_ADDR` 和 `CONTEXT_LENS_FRONTEND_PORT` 覆盖。若改成非 loopback upstream，默认会拒绝；只有明确设置 `CONTEXT_LENS_ALLOW_NON_LOOPBACK=1` 才允许启动。
 
 也可以不使用启动脚本，直接运行：
 

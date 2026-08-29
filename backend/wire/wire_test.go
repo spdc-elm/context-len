@@ -263,9 +263,10 @@ func TestResponseEnvelopeCopiesAndRedactsHeadersAndTrailers(t *testing.T) {
 
 func TestHeaderRedactionAndValidation(t *testing.T) {
 	input := http.Header{
-		"authorization": {"Bearer secret"},
-		"X-API-KEY":     {"one", "two"},
-		"X-Trace":       {"a", "b"},
+		"authorization":      {"Bearer secret"},
+		"X-API-KEY":          {"one", "two"},
+		"X-Context-Lens-Key": {"client-secret"},
+		"X-Trace":            {"a", "b"},
 	}
 	redacted := RedactHeaders(input)
 	if len(redacted.Values("X-API-KEY")) != 1 || redacted.Get("X-API-KEY") != RedactedHeaderValue {
@@ -273,6 +274,9 @@ func TestHeaderRedactionAndValidation(t *testing.T) {
 	}
 	if !strings.EqualFold(redacted.Get("Authorization"), RedactedHeaderValue) {
 		t.Fatalf("authorization = %#v", redacted.Values("Authorization"))
+	}
+	if redacted.Get("X-Context-Lens-Key") != RedactedHeaderValue {
+		t.Fatalf("context-lens key was not redacted")
 	}
 	if strings.Join(redacted["X-Trace"], ",") != "a,b" {
 		t.Fatalf("trace changed = %#v", redacted["X-Trace"])

@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context-lens/backend/auth"
 	"context-lens/backend/exchange"
 	"context-lens/backend/inspection"
 	"context-lens/backend/persistence"
@@ -54,6 +55,10 @@ type Config struct {
 	// MVP defaults to local mock upstreams and rejects SSRF-prone origins.
 	AllowNonLoopback bool
 
+	// ClientAuth optionally protects proxy routes (/v1/*). Healthz remains
+	// mounted by the process app server and is intentionally public.
+	ClientAuth auth.Config
+
 	// MaxBodyBytes bounds each captured request/response body.  Zero means
 	// unlimited.  A body exceeding the limit is rejected rather than being
 	// forwarded with a misleading complete artifact.
@@ -68,12 +73,13 @@ type Config struct {
 // objects needed by workspace.NewWithRegistry.  The registry remains the
 // source of truth for exchange state and commands.
 type Gateway struct {
-	upstream *transport.Transport
-	registry *exchange.Registry
-	store    *persistence.Store
-	policy   *policy.Store
-	maxBody  int64
-	observer exchange.EventSink
+	upstream   *transport.Transport
+	registry   *exchange.Registry
+	store      *persistence.Store
+	policy     *policy.Store
+	maxBody    int64
+	observer   exchange.EventSink
+	clientAuth auth.Config
 
 	subMu sync.RWMutex
 	subs  map[uint64]func(exchange.Event)
@@ -84,6 +90,9 @@ type Gateway struct {
 // transport.New and creates a bounded-independent persistence store when one
 // was not supplied.
 func New(cfg Config) (*Gateway, error) {
+	if err := cfg.ClientAuth.Validate(); err != nil {
+		return nil, err
+	}
 	upstream := cfg.Upstream
 	if upstream == nil {
 		tcfg := cfg.Transport
@@ -143,13 +152,14 @@ func New(cfg Config) (*Gateway, error) {
 	}
 
 	return &Gateway{
-		upstream: upstream,
-		registry: registry,
-		store:    store,
-		policy:   polStore,
-		maxBody:  cfg.MaxBodyBytes,
-		observer: cfg.Events,
-		subs:     make(map[uint64]func(exchange.Event)),
+		upstream:   upstream,
+		registry:   registry,
+		store:      store,
+		policy:     polStore,
+		maxBody:    cfg.MaxBodyBytes,
+		observer:   cfg.Events,
+		clientAuth: cfg.ClientAuth,
+		subs:       make(map[uint64]func(exchange.Event)),
 	}, nil
 }
 
@@ -248,6 +258,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r == nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if !g.clientAuth.Authorize(r) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="context-lens"`)
+		http.Error(w, "context-lens: authentication required", http.StatusUnauthorized)
 		return
 	}
 

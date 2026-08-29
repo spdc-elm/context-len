@@ -32,6 +32,23 @@ Kinds include `exchange_created, request_held, upstream_started, response_held, 
 
 The additive `stream_event` kind carries one observed SSE record while a response body is still streaming: `stream { ordinal, name, sse_id, data, complete, byte_start, byte_end }`. Stream events never commit a revision (revision stays 0), are deduplicated by ordinal on the client, and are display-only copies — the response artifact remains the only wire authority. `byte_start`/`byte_end` locate the record's raw bytes inside the response artifact. Non-event-stream responses emit no stream events.
 
+## Optional proxy access authentication
+
+The process can optionally require a separate client API key for `/v1/*` proxy requests. Configure it in the private local runtime file:
+
+```json
+"client_auth": {
+  "enabled": true,
+  "api_key": "a-local-client-key"
+}
+```
+
+Accepted request headers are the standard credentials clients already use: `Authorization: Bearer <client key>`, `X-API-Key`, and `API-Key`. No context-lens-specific client header is required. The client key is checked before request-body capture, is never forwarded to upstream, and is redacted from workspace projections. `GET /healthz` remains public for readiness checks; `/api` remains a loopback workspace surface. The existing top-level `api_key` is independent and is only the server-side upstream credential.
+
+## Upstream authentication mode
+
+`upstream_auth_mode` is `passthrough` or `configured`. In `passthrough`, inbound provider authentication headers are retained for the upstream request, which supports the pure transparent "change only base URL" path. In `configured`, inbound credential headers are removed and the server-side top-level `api_key` is injected as `Authorization: Bearer ...`. For backward compatibility, an omitted mode infers `configured` when top-level `api_key` is non-empty and `passthrough` otherwise. Explicit `passthrough` and a non-empty top-level `api_key` are rejected to avoid ambiguous credential ownership.
+
 ## Transport invariant
 
 The proxy forwards artifact readers directly in bypass/release-unchanged paths. It never JSON decodes/re-encodes or aggregates/re-generates SSE on those paths. Inspector output is projection-only and cannot become transport input.

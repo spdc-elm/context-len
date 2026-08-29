@@ -129,7 +129,7 @@ func containsFold(values []string, target string) bool {
 func isInboundCredential(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
-	case "authorization", "proxy-authorization", "x-api-key", "api-key", "apikey", "x-apikey", "cookie", "set-cookie":
+	case "authorization", "proxy-authorization", "x-api-key", "api-key", "apikey", "x-apikey", "x-context-lens-key", "cookie", "set-cookie":
 		return true
 	}
 	for _, marker := range []string{"authorization", "api-key", "apikey", "auth-token", "access-token", "refresh-token", "client-secret", "secret", "credential", "password", "session-token"} {

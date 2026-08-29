@@ -1,4 +1,9 @@
 {
   "base_url": "http://127.0.0.1:19091",
-  "api_key": ""
+  "api_key": "",
+  "upstream_auth_mode": "passthrough",
+  "client_auth": {
+    "enabled": false,
+    "api_key": ""
+  }
 }

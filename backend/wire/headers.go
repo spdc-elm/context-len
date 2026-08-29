@@ -48,7 +48,7 @@ func IsSensitiveHeader(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	switch name {
 	case "authorization", "proxy-authorization", "www-authenticate",
-		"x-api-key", "api-key", "apikey", "x-apikey",
+		"x-api-key", "api-key", "apikey", "x-apikey", "x-context-lens-key",
 		"cookie", "set-cookie":
 		return true
 	}
