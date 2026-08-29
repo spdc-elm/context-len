@@ -39,11 +39,13 @@ function safeJson(value: unknown, raw?: string): string {
 }
 
 /** The ChatML role a context block serializes into. Mirrors the official Qwen
- * templates: tool results ride in a user segment, and tool definitions plus
- * unknown passthrough live in the system segment. */
+ * templates: tool results ride in a user segment, and tool definitions live in
+ * the system segment. Unknown passthrough keeps its own `unknown` role so
+ * unrecognized provider data is never presented as a system message. */
 export function qwenBlockRole(block: ContextBlock): string {
   if (block.kind === "tool_result") return "user";
-  if (block.kind === "tool_definition" || block.kind === "unknown") return "system";
+  if (block.kind === "tool_definition") return "system";
+  if (block.kind === "unknown") return "unknown";
   return block.role ?? block.kind;
 }
 

@@ -16,12 +16,23 @@ import (
 // toward capture and the downstream client.  It never rewrites, delays, or
 // aggregates transport bytes: the scanner consumes a copy of every chunk that
 // already flowed through, and the emitted workspace events are display-only
-// projections of those copies.
+// projections of those copies.  It additionally notes the protocol terminal
+// record's position so the direct streaming path can distinguish a client
+// disconnect after full delivery from a mid-stream interruption.
 type streamTap struct {
 	gateway    *Gateway
 	exchangeID string
+	protocol   inspection.Protocol
 	scanner    inspection.StreamScanner
 	emitted    atomic.Int64
+
+	// terminalEnd is the byte offset just past the protocol terminal record;
+	// zero until a terminal record is observed on the upstream leg.  Written
+	// from the streaming goroutine only (feed runs inside Read).
+	terminalEnd int64
+	// terminalDelivered is set once the terminal record's bytes were written
+	// toward the downstream client.
+	terminalDelivered atomic.Bool
 }
 
 // feed consumes one observed chunk and emits a workspace stream event for
@@ -32,6 +43,9 @@ func (t *streamTap) feed(chunk []byte) {
 	}
 	for _, record := range t.scanner.Write(chunk) {
 		t.emit(record)
+		if t.terminalEnd == 0 && record.Complete && inspection.IsTerminalStreamRecord(t.protocol, record) {
+			t.terminalEnd = int64(record.Span.End)
+		}
 	}
 }
 
@@ -48,6 +62,26 @@ func (t *streamTap) finish() {
 
 func (t *streamTap) emit(record inspection.SSEEvent) {
 	t.gateway.emitStreamEvent(t.exchangeID, record)
+}
+
+// markTerminalDelivered records that the client received bytesWritten bytes,
+// marking the terminal record as delivered once the count covers it.
+func (t *streamTap) markTerminalDelivered(bytesWritten int64) {
+	if t == nil || t.terminalDelivered.Load() {
+		return
+	}
+	if t.terminalEnd > 0 && bytesWritten >= t.terminalEnd {
+		t.terminalDelivered.Store(true)
+	}
+}
+
+// isTerminalDelivered reports whether the protocol terminal record has been
+// written toward the client. Safe from any goroutine.
+func (t *streamTap) isTerminalDelivered() bool {
+	if t == nil {
+		return false
+	}
+	return t.terminalDelivered.Load()
 }
 
 // tapReadCloser interposes the response body so every read is observed by the
@@ -82,16 +116,17 @@ func (r *tapReadCloser) Close() error {
 // attachStreamTap wraps resp.Body with an observing reader when the upstream
 // response is an event stream.  Responses with other content types pass
 // through untouched: their bodies are not SSE records and the complete-body
-// inspection remains the only projection.
-func (g *Gateway) attachStreamTap(exchangeID string, respBody io.ReadCloser, contentType string) io.ReadCloser {
+// inspection remains the only projection.  The returned tap (nil for non-SSE
+// bodies) tracks the protocol terminal record for the direct streaming path.
+func (g *Gateway) attachStreamTap(exchangeID string, respBody io.ReadCloser, contentType string, protocol string) (io.ReadCloser, *streamTap) {
 	if g == nil || respBody == nil {
-		return respBody
+		return respBody, nil
 	}
 	if !strings.Contains(strings.ToLower(contentType), "text/event-stream") {
-		return respBody
+		return respBody, nil
 	}
-	tap := &streamTap{gateway: g, exchangeID: exchangeID}
-	return &tapReadCloser{inner: respBody, tap: tap}
+	tap := &streamTap{gateway: g, exchangeID: exchangeID, protocol: inspection.Protocol(protocol)}
+	return &tapReadCloser{inner: respBody, tap: tap}, tap
 }
 
 // emitStreamEvent publishes one observed SSE record to workspace subscribers.

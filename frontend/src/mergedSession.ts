@@ -1,4 +1,5 @@
 import type { ExchangeSnapshot } from "./contracts";
+import { responseArtifact } from "./contracts";
 import { normalizeContext, normalizeContextFromValue, type ContextBlock, type ContextDocument } from "./contextIr";
 import { buildLiveStream, parseSseRecords, type LiveStreamState } from "./streamIr";
 
@@ -194,21 +195,37 @@ export function buildMergedSession(
       }
     }
 
-    // The response side is the assistant authority. The selected turn may
-    // still be streaming, in which case the live projection replaces it.
+    // The response side is the assistant authority, rendered from the
+    // response artifact once its body is loaded. Before that, the live
+    // projection keeps already-observed blocks on screen — including after
+    // a terminal exchange event — so streamed content never flashes away
+    // while the artifact body loads.
     const isSelected = input.exchange.exchange_id === selectedExchangeId;
     let responseBlocks: ContextBlock[] = [];
     let responseStream: LiveStreamState | undefined;
-    if (isSelected && live && live.status === "streaming") {
-      responseStream = live;
-    } else if (input.responseIsSse && input.responseBody !== undefined) {
+    if (input.responseIsSse && input.responseBody !== undefined) {
       responseStream = buildLiveStream(protocol, parseSseRecords(input.responseBody));
     } else if (input.responseBody !== undefined) {
       responseBlocks = responseBlocksFromJson(protocol, input.responseBody);
+    } else if (isSelected && live) {
+      responseStream = live;
     }
-    if (input.responseBody === undefined && !responseStream) {
+    if (input.responseBody !== undefined || responseStream !== undefined) {
+      // Rendering response content from the artifact or the live fallback;
+      // an incomplete ref (post-terminal drain timeout, or a mid-stream
+      // interruption) stays visible as a marker.
+      const responseRef = responseArtifact(input.exchange);
+      if (responseRef && !responseRef.complete) markers.push("response incomplete");
+    } else if (!responseStream) {
       const refs = input.exchange.response.artifact_refs ?? [];
-      if (refs.length > 0 && input.exchange.state !== "request_held") markers.push("response pending");
+      if (input.exchange.state === "request_held" || (isSelected && live && live.status === "streaming")) {
+        // No response applies yet: the gate still holds the request, or the
+        // response is still streaming toward the client.
+      } else if (refs.length === 0) {
+        markers.push("response unavailable");
+      } else {
+        markers.push("response loading");
+      }
     }
 
     turns.push({

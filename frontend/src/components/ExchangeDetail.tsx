@@ -427,7 +427,11 @@ export function ExchangeDetail({
   }, [exchange, sessionLineage, loadedBodies, liveStream]);
 
   useEffect(() => {
-    if (!sessionLineage || sessionLineage.length === 0 || activeTab !== "chat_template") return;
+    // Split view renders the Chat Template pane regardless of the active
+    // tab, so the lineage loader must run whenever the session stream is
+    // visible, not only on the chat_template tab.
+    const chatTemplateVisible = activeTab === "chat_template" || split;
+    if (!sessionLineage || sessionLineage.length === 0 || !chatTemplateVisible) return;
     if (bodyLoading) return;
     for (const turn of sessionLineage) {
       for (const ref of [forwardedRequestArtifact(turn), responseArtifact(turn)]) {
@@ -437,7 +441,7 @@ export function ExchangeDetail({
         }
       }
     }
-  }, [activeTab, bodyLoading, loadedBodies, onLoadBody, sessionLineage]);
+  }, [activeTab, split, bodyLoading, loadedBodies, onLoadBody, sessionLineage]);
 
   useEffect(() => {
     if (artifact && !loadedBodies[artifact.artifact_id] && !bodyLoading) onLoadBody(artifact);

@@ -149,7 +149,7 @@ function addResponsesItem(out: ContextBlock[], item: unknown, sourcePointer: str
   const type = typeof item.type === "string" ? item.type : "unknown";
   if (type === "message") addTextOrParts(out, roleKind(item.role ?? "assistant"), item.content, pointer(sourcePointer, "content"), item);
   else if (type === "function_call" || type === "custom_tool_call") addToolCall(out, item, sourcePointer);
-  else if (type === "function_call_output") addToolResult(out, item, sourcePointer);
+  else if (type === "function_call_output" || type === "custom_tool_call_output") addToolResult(out, item, sourcePointer);
   else if (type === "reasoning") {
     const summary = Array.isArray(item.summary) ? item.summary.map(textOf).filter(Boolean).join("\n") : textOf(item.summary);
     out.push(block("reasoning", sourcePointer, item, { role: "assistant", text: summary, content: [part("reasoning", item, sourcePointer)] }));

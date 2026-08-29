@@ -74,7 +74,18 @@ type Config struct {
 	// exceeded, least-recently-active sessions are evicted wholesale and
 	// their follow-ups become fresh roots.
 	SessionMaxPositions int
+
+	// ResponseDrainTimeout bounds how long the upstream response keeps
+	// being drained after the protocol terminal record was delivered to the
+	// client and the client disconnected. Zero selects the default (5s).
+	// The drain exists only to complete the response artifact; the exchange
+	// is already complete by delivery.
+	ResponseDrainTimeout time.Duration
 }
+
+// DefaultResponseDrainTimeout bounds the post-terminal upstream drain when no
+// explicit value is configured.
+const DefaultResponseDrainTimeout = 5 * time.Second
 
 // Gateway is an HTTP handler and the owner of the concrete integration
 // objects needed by workspace.NewWithRegistry.  The registry remains the
@@ -87,6 +98,9 @@ type Gateway struct {
 	maxBody    int64
 	observer   exchange.EventSink
 	clientAuth auth.Config
+
+	// responseDrainTimeout bounds the post-terminal upstream drain.
+	responseDrainTimeout time.Duration
 
 	subMu sync.RWMutex
 	subs  map[uint64]func(exchange.Event)
@@ -103,6 +117,10 @@ type Gateway struct {
 func New(cfg Config) (*Gateway, error) {
 	if err := cfg.ClientAuth.Validate(); err != nil {
 		return nil, err
+	}
+	drainTimeout := cfg.ResponseDrainTimeout
+	if drainTimeout <= 0 {
+		drainTimeout = DefaultResponseDrainTimeout
 	}
 	upstream := cfg.Upstream
 	if upstream == nil {
@@ -163,15 +181,16 @@ func New(cfg Config) (*Gateway, error) {
 	}
 
 	return &Gateway{
-		upstream:   upstream,
-		registry:   registry,
-		store:      store,
-		policy:     polStore,
-		maxBody:    cfg.MaxBodyBytes,
-		observer:   cfg.Events,
-		clientAuth: cfg.ClientAuth,
-		subs:       make(map[uint64]func(exchange.Event)),
-		sessions:   session.NewIndex(cfg.SessionMaxPositions),
+		upstream:            upstream,
+		registry:            registry,
+		store:               store,
+		policy:              polStore,
+		maxBody:             cfg.MaxBodyBytes,
+		observer:           cfg.Events,
+		clientAuth:          cfg.ClientAuth,
+		responseDrainTimeout: drainTimeout,
+		subs:                make(map[uint64]func(exchange.Event)),
+		sessions:            session.NewIndex(cfg.SessionMaxPositions),
 	}, nil
 }
 
@@ -459,7 +478,13 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 	}
 
 	started := time.Now().UTC()
-	prepared, err := g.upstream.PrepareRequest(ctx, outbound, nil)
+	// The upstream leg owns its own context. A downstream client disconnect
+	// cancels the upstream request only until the protocol terminal record
+	// has been delivered; after that the response is drained for a complete
+	// artifact (bounded by the drain timeout) instead of being aborted.
+	upCtx, upCancel := context.WithCancel(context.Background())
+	defer upCancel()
+	prepared, err := g.upstream.PrepareRequest(upCtx, outbound, nil)
 	if err != nil {
 		return exchange.UpstreamResponse{}, err
 	}
@@ -479,29 +504,61 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 	// Observation tap for streaming responses: a copy of every chunk is fed
 	// to the SSE scanner so workspace subscribers see typed stream events in
 	// real time.  The tap never touches the bytes the transport copies onward.
-	resp.Body = g.attachStreamTap(req.ExchangeID, resp.Body, resp.Header.Get("Content-Type"))
+	var tap *streamTap
+	resp.Body, tap = g.attachStreamTap(req.ExchangeID, resp.Body, resp.Header.Get("Content-Type"), protocol)
 	defer resp.Body.Close()
 
+	if tap != nil {
+		stopWatch := make(chan struct{})
+		defer close(stopWatch)
+		go func() {
+			select {
+			case <-ctx.Done():
+				// The client is gone. Unless the terminal record already reached
+				// it (the response then drains to a completed artifact), the
+				// upstream leg is released immediately.
+				if !tap.isTerminalDelivered() {
+					upCancel()
+				}
+			case <-stopWatch:
+			}
+		}()
+	}
+
 	if direct {
-		artifact, _, err := g.captureAndStream(ctx, resp, w, committed)
+		streamed, err := g.captureAndStream(ctx, req.ExchangeID, resp, w, committed, tap, upCancel)
 		if err != nil {
 			// The bytes already streamed to the client stay inspectable even
 			// when the stream was cut short (client disconnect or write
 			// failure): retain the partial capture instead of dropping it.
-			g.retainPartialResponse(req.ExchangeID, artifact, protocol, true)
+			g.retainPartialResponse(req.ExchangeID, streamed.artifact, protocol, true)
 			return exchange.UpstreamResponse{}, err
 		}
 		directWritten.Store(true)
-		downstreamArtifact := copyArtifact(artifact, wire.StageResponseDownstream, wire.DirectionDownstream)
+		downstreamOpts := wire.ArtifactOptions{
+			Stage:           wire.StageResponseDownstream,
+			Direction:       wire.DirectionDownstream,
+			ContentType:     resp.Header.Get("Content-Type"),
+			ContentEncoding: resp.Header.Get("Content-Encoding"),
+		}
+		// The downstream copy is exactly the bytes that reached the client;
+		// a post-terminal drain can leave the upstream capture longer than
+		// the delivered prefix when the client hung up first.
+		var downstreamArtifact wire.BodyArtifact
+		if streamed.artifact.Ref().Complete {
+			downstreamArtifact = wire.NewArtifact(streamed.delivered, downstreamOpts)
+		} else {
+			downstreamArtifact = wire.NewIncompleteArtifact(streamed.delivered, downstreamOpts)
+		}
 		if err := g.putArtifact(downstreamArtifact); err != nil {
 			return exchange.UpstreamResponse{}, err
 		}
 		if err := g.registry.AddArtifactRef(req.ExchangeID, false, downstreamArtifact.Ref()); err != nil {
 			return exchange.UpstreamResponse{}, err
 		}
-		g.noteContextTokens(req.ExchangeID, protocol, artifact.Bytes())
-		g.noteResponseID(req.ExchangeID, protocol, artifact.Bytes())
-		return exchange.UpstreamResponse{Envelope: envelopeWithTimes(resp, started), Artifact: artifact}, nil
+		g.noteContextTokens(req.ExchangeID, protocol, streamed.artifact.Bytes())
+		g.noteResponseID(req.ExchangeID, protocol, streamed.artifact.Bytes())
+		return exchange.UpstreamResponse{Envelope: envelopeWithTimes(resp, started), Artifact: streamed.artifact}, nil
 	}
 
 	artifact, err := captureReadCloser(ctx, resp.Body, wire.CaptureOptions{
@@ -554,16 +611,29 @@ func envelopeWithTimes(resp *http.Response, started time.Time) wire.ResponseEnve
 	return wire.ResponseFromHTTP(resp, started, time.Now().UTC())
 }
 
+// streamOutcome carries what the direct streaming path produced: the full
+// upstream capture (the response artifact) and the byte prefix that actually
+// reached the client.
+type streamOutcome struct {
+	artifact  wire.BodyArtifact
+	envelope  wire.ResponseEnvelope
+	delivered []byte
+}
+
 // captureAndStream performs a byte-for-byte response copy while retaining a
 // complete immutable artifact. It writes no synthetic SSE delimiters and does
-// not inspect JSON.  The buffer is required by exchange.UpstreamRoundTripper's
-// artifact-returning contract; headers/body still reach pass-through clients
-// immediately.
-func (g *Gateway) captureAndStream(ctx context.Context, resp *http.Response, w http.ResponseWriter, committed *writeState) (wire.BodyArtifact, wire.ResponseEnvelope, error) {
+// not inspect JSON.  Headers/body still reach pass-through clients immediately.
+//
+// Once the protocol terminal record has been delivered to the client, the
+// downstream connection's context no longer governs the loop: a client that
+// hung up right after the terminal record (the normal lifecycle of streaming
+// harnesses) leaves the upstream leg draining until EOF or the drain timeout,
+// so the exchange completes with the fullest artifact available.
+func (g *Gateway) captureAndStream(ctx context.Context, exchangeID string, resp *http.Response, w http.ResponseWriter, committed *writeState, tap *streamTap, upCancel context.CancelFunc) (streamOutcome, error) {
 	started := time.Now().UTC()
 	envelope := wire.ResponseFromHTTP(resp, started, time.Time{})
 	if err := writeResponseHeaders(w, envelope, committed); err != nil {
-		return wire.BodyArtifact{}, wire.ResponseEnvelope{}, err
+		return streamOutcome{}, err
 	}
 	flusher, _ := w.(http.Flusher)
 	if flusher != nil {
@@ -573,9 +643,28 @@ func (g *Gateway) captureAndStream(ctx context.Context, resp *http.Response, w h
 	var captured bytes.Buffer
 	captureIncomplete := false
 	buf := make([]byte, 32*1024)
+	var delivered int64 // bytes written toward the client
+	draining := false   // terminal record delivered; the drain timeout bounds the rest
+	clientGone := false // a drain-mode write already failed; stop writing
+	var drainTimer *time.Timer
+	var drainTimedOut atomic.Bool
+	defer func() {
+		if drainTimer != nil {
+			drainTimer.Stop()
+		}
+	}()
+	outcome := func(artifact wire.BodyArtifact) streamOutcome {
+		deliveredBytes := artifact.Bytes()
+		if int64(len(deliveredBytes)) > delivered {
+			deliveredBytes = deliveredBytes[:delivered]
+		}
+		return streamOutcome{artifact: artifact, envelope: envelopeWithTimes(resp, started), delivered: deliveredBytes}
+	}
 	for {
-		if err := contextError(ctx); err != nil {
-			return incompleteResponseArtifact(resp, captured.Bytes()), envelopeWithTimes(resp, started), err
+		if !draining {
+			if err := contextError(ctx); err != nil {
+				return outcome(incompleteResponseArtifact(resp, captured.Bytes())), err
+			}
 		}
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
@@ -590,15 +679,33 @@ func (g *Gateway) captureAndStream(ctx context.Context, resp *http.Response, w h
 					_, _ = captured.Write(buf[:n])
 				}
 			}
-			written, writeErr := w.Write(buf[:n])
-			if writeErr != nil {
-				return incompleteResponseArtifact(resp, captured.Bytes()), envelopeWithTimes(resp, started), writeErr
-			}
-			if written != n {
-				return incompleteResponseArtifact(resp, captured.Bytes()), envelopeWithTimes(resp, started), io.ErrShortWrite
-			}
-			if flusher != nil {
-				flusher.Flush()
+			if !clientGone {
+				written, writeErr := w.Write(buf[:n])
+				if writeErr == nil && written == n {
+					delivered += int64(written)
+					tap.markTerminalDelivered(delivered)
+					if !draining && tap.isTerminalDelivered() {
+						draining = true
+						drainTimer = time.AfterFunc(g.responseDrainTimeout, func() {
+							drainTimedOut.Store(true)
+							upCancel()
+						})
+					}
+					if flusher != nil {
+						flusher.Flush()
+					}
+				} else if !draining {
+					// A pre-terminal write failure or short write is a genuine
+					// interruption of the exchange.
+					if writeErr != nil {
+						return outcome(incompleteResponseArtifact(resp, captured.Bytes())), writeErr
+					}
+					return outcome(incompleteResponseArtifact(resp, captured.Bytes())), io.ErrShortWrite
+				} else {
+					// After the terminal record a write failure only means the
+					// client hung up; keep draining for the artifact.
+					clientGone = true
+				}
 			}
 		}
 		if readErr != nil {
@@ -614,10 +721,31 @@ func (g *Gateway) captureAndStream(ctx context.Context, resp *http.Response, w h
 				}
 				finalEnvelope := wire.ResponseFromHTTP(resp, started, time.Now().UTC())
 				setResponseTrailers(w, finalEnvelope.Trailers)
-				return artifact, finalEnvelope, nil
+				result := outcome(artifact)
+				result.envelope = finalEnvelope
+				return result, nil
 			}
-			return incompleteResponseArtifact(resp, captured.Bytes()), envelopeWithTimes(resp, started), readErr
+			if draining {
+				// The terminal record already reached the client, so an
+				// upstream read failure now only affects artifact completeness.
+				g.noteDrainWarning(exchangeID, drainTimedOut.Load())
+				return outcome(incompleteResponseArtifact(resp, captured.Bytes())), nil
+			}
+			return outcome(incompleteResponseArtifact(resp, captured.Bytes())), readErr
 		}
+	}
+}
+
+// noteDrainWarning records why a post-terminal drain ended without an
+// upstream EOF. Observation only: it never changes the exchange outcome.
+func (g *Gateway) noteDrainWarning(exchangeID string, timedOut bool) {
+	if g == nil || g.registry == nil {
+		return
+	}
+	if timedOut {
+		_ = g.registry.AddWarnings(exchangeID, fmt.Sprintf("response drain timed out after %s; artifact incomplete", g.responseDrainTimeout))
+	} else {
+		_ = g.registry.AddWarnings(exchangeID, "upstream response ended during post-terminal drain; artifact incomplete")
 	}
 }
 

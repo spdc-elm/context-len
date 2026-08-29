@@ -456,9 +456,13 @@ function TurnBoundary({ turn, isLast, streaming }: { turn: MergedTurn; isLast: b
   );
 }
 
-export function ChatTemplateView({ protocol, body, artifact, live, turns }: ChatTemplateViewProps) {
+export function ChatTemplateView({ protocol, body, artifact, live, turns, selectedExchangeId }: ChatTemplateViewProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [scope, setScope] = useState<"session" | "request">("session");
+  // Unknown passthrough blocks stay hidden by default: they are noise from
+  // unrecognized provider events, kept available behind an explicit toggle
+  // instead of drowning the conversation. The choice is display-only.
+  const [showUnknown, setShowUnknown] = useState(false);
   const viewRef = useRef<HTMLElement | null>(null);
   const scrollParentRef = useRef<HTMLElement | null>(null);
   const followLatestRef = useRef(true);
@@ -476,24 +480,32 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns }: Chat
   const activeStream = streamFromBody ?? live;
   const useSessionScope = scope === "session" && (turns?.turns.length ?? 0) > 0;
 
+  // Unknown blocks hidden per exchange: the default is hidden, and switching
+  // exchanges starts a fresh reading session with the same default.
+  useEffect(() => {
+    setShowUnknown(false);
+  }, [selectedExchangeId]);
+
   const sessionSegments = useMemo(() => {
     if (!useSessionScope || !turns) return [];
     const out: Segment[][] = [];
     turns.turns.forEach((turn, index) => {
       const namespace = `t${index}`;
-      const contextBlocks = turn.contextDocument
+      const rawContext = turn.contextDocument
         ? turn.contextDocument.blocks.map((block) => ({ ...block, id: `${namespace}:${block.id}` }))
         : namespaceBlocks(turn.contextBlocks, namespace);
+      const contextBlocks = showUnknown ? rawContext : rawContext.filter((block) => block.kind !== "unknown");
       const rendered: RenderedContextBlock[] = [];
       rendered.push(...renderQwenBlocks(documentForBlocks(protocol, contextBlocks)));
       const responseBlocks = turn.responseStream
         ? turn.responseStream.blocks
         : turn.responseBlocks;
-      rendered.push(...renderQwenBlocks(documentForBlocks(protocol, namespaceBlocks(responseBlocks, namespace))));
+      const visibleResponse = showUnknown ? responseBlocks : responseBlocks.filter((block) => block.kind !== "unknown");
+      rendered.push(...renderQwenBlocks(documentForBlocks(protocol, namespaceBlocks(visibleResponse, namespace))));
       out.push(rendered.map(({ block }, blockIndex) => blockToSegment(block, blockIndex)));
     });
     return out;
-  }, [useSessionScope, turns, protocol]);
+  }, [useSessionScope, turns, protocol, showUnknown]);
 
   const blocks = useMemo<RenderedContextBlock[]>(() => {
     if (useSessionScope) return [];
@@ -506,7 +518,25 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns }: Chat
     // the assistant's reply grow at the end of the context the model saw.
     return [...base, ...live.blocks.map((block) => ({ block, text: renderQwenBlock(block) }))];
   }, [document, live, streamFromBody, useSessionScope]);
-  const segments = useMemo(() => blocks.map(({ block }, index) => blockToSegment(block, index)), [blocks]);
+  const visibleBlocks = useMemo(
+    () => (showUnknown ? blocks : blocks.filter(({ block }) => block.kind !== "unknown")),
+    [blocks, showUnknown],
+  );
+  const segments = useMemo(() => visibleBlocks.map(({ block }, index) => blockToSegment(block, index)), [visibleBlocks]);
+
+  // The unknown count covers everything the active scope would render before
+  // filtering, so the toggle always reports what is being hidden.
+  const unknownCount = useMemo(() => {
+    if (useSessionScope && turns) {
+      return turns.turns.reduce((sum, turn) => {
+        const context = turn.contextDocument ? turn.contextDocument.blocks : turn.contextBlocks;
+        const response = turn.responseStream ? turn.responseStream.blocks : turn.responseBlocks;
+        return sum + context.filter((block) => block.kind === "unknown").length + response.filter((block) => block.kind === "unknown").length;
+      }, 0);
+    }
+    const source = streamFromBody ? streamFromBody.blocks : [...document.blocks, ...(live?.blocks ?? [])];
+    return source.filter((block) => block.kind === "unknown").length;
+  }, [useSessionScope, turns, streamFromBody, document, live]);
 
   useLayoutEffect(() => {
     setCollapsed({});
@@ -588,9 +618,19 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns }: Chat
         {!useSessionScope && activeStream && activeStream.eventCount > 0 ? (
           streamChip(activeStream.status, activeStream.statusDetail, activeStream.eventCount)
         ) : (
-          !useSessionScope ? <span>{document.blocks.length} blocks</span> : null
+          !useSessionScope ? <span>{visibleBlocks.length} blocks</span> : null
         )}
         {useSessionScope ? <span className="chat-session-meta">session lineage</span> : null}
+        {unknownCount > 0 ? (
+          <button
+            type="button"
+            className={`chat-unknown-toggle ${showUnknown ? "active" : ""}`}
+            aria-pressed={showUnknown}
+            onClick={() => setShowUnknown((current) => !current)}
+          >
+            {showUnknown ? "Hide" : "Show"} unknown ({unknownCount})
+          </button>
+        ) : null}
       </div>
       {document.warnings.length > 0 && !isSse && !useSessionScope && (
         <div className="warning-box">

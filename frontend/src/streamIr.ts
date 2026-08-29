@@ -131,6 +131,12 @@ function responsesDeltas(record: StreamEventRecord): StreamDelta[] {
       return appendDelta("tool_call_args", itemId, payload.delta);
     case "response.function_call_arguments.done":
       return [{ kind: "tool_call_args", key: itemId, append: "", replace: textOrUndef(payload.arguments) }];
+    case "response.custom_tool_call_input.delta":
+      // A custom tool's input is its arguments: the provider streams the
+      // raw input (for example JS source for an exec tool) as deltas.
+      return appendDelta("tool_call_args", itemId, payload.delta);
+    case "response.custom_tool_call_input.done":
+      return [{ kind: "tool_call_args", key: itemId, append: "", replace: textOrUndef(payload.input) }];
     case "response.refusal.delta":
       return appendDelta("append_refusal", itemId, payload.delta);
     case "response.output_item.added":

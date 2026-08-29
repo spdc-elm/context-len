@@ -216,3 +216,55 @@ describe("buildMergedSession", () => {
     expect(merged.turns[1].responseBlocks.map((block) => block.kind)).toEqual(["assistant"]);
   });
 });
+
+describe("response body loading states", () => {
+  it("keeps a terminal live stream visible while the artifact body loads", () => {
+    const t1 = snapshot("t1", undefined, 1, { state: "cancelled" });
+    t1.response.artifact_refs = [{ artifact_id: "a", stage: "response.upstream", direction: "upstream", content_type: "text/event-stream", content_encoding: "identity", size: 10, sha256: "s", complete: false, storage_ref: "" }];
+    const live = {
+      protocol: "anthropic_messages",
+      status: "cancelled",
+      eventCount: 5,
+      events: [],
+      blocks: [{ id: "live:block:0", kind: "assistant", role: "assistant", text: "streamed answer", content: [], sourcePointer: "/events/0" }],
+      warnings: [],
+    } as never;
+    const merged = buildMergedSession("anthropic_messages", [
+      turnInput(t1, request1, undefined, true),
+    ], live, "t1");
+    // The live blocks stay rendered after the terminal event instead of
+    // flashing away while the artifact body loads.
+    expect(merged.turns[0].responseStream).toBe(live);
+    expect(merged.turns[0].markers).not.toContain("response loading");
+    expect(merged.turns[0].markers).toContain("response incomplete");
+  });
+
+  it("prefers the loaded response artifact over the live fallback", () => {
+    const t1 = snapshot("t1", undefined, 1);
+    const live = {
+      protocol: "anthropic_messages",
+      status: "cancelled",
+      eventCount: 5,
+      events: [],
+      blocks: [{ id: "live:block:0", kind: "assistant", role: "assistant", text: "streamed answer", content: [], sourcePointer: "/events/0" }],
+      warnings: [],
+    } as never;
+    const merged = buildMergedSession("anthropic_messages", [
+      turnInput(t1, request1, response1),
+    ], live, "t1");
+    expect(merged.turns[0].responseBlocks.map((block) => block.kind)).toEqual(["thinking", "tool_call"]);
+    expect(merged.turns[0].responseStream).toBeUndefined();
+  });
+
+  it("distinguishes unavailable and still-loading responses", () => {
+    const unavailable = snapshot("u1", undefined, 1, { state: "cancelled" });
+    const loading = snapshot("l1", undefined, 1, { state: "cancelled" });
+    loading.response.artifact_refs = [{ artifact_id: "a", stage: "response.upstream", direction: "upstream", content_type: "text/event-stream", content_encoding: "identity", size: 10, sha256: "s", complete: false, storage_ref: "" }];
+    const merged = buildMergedSession("anthropic_messages", [
+      turnInput(unavailable, request1, undefined),
+      turnInput(loading, request1, undefined),
+    ], undefined, "l1");
+    expect(merged.turns[0].markers).toContain("response unavailable");
+    expect(merged.turns[1].markers).toContain("response loading");
+  });
+});

@@ -344,6 +344,9 @@ body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
 .chat-scope-toggle { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .chat-scope-button { padding: 3px 9px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: 10.5px; font-weight: 600; }
 .chat-scope-button.active { color: #0c3f30; background: var(--accent); }
+.chat-unknown-toggle { margin-left: auto; padding: 3px 9px; border: 1px dashed var(--line-bright); border-radius: 6px; color: var(--muted); background: transparent; font-size: 10.5px; font-weight: 600; cursor: pointer; }
+.chat-unknown-toggle:hover { color: var(--text); border-color: var(--muted); }
+.chat-unknown-toggle.active { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
 .chat-session-meta { color: var(--muted); font-size: 10.5px; letter-spacing: .04em; }
 .chat-turn { position: relative; }
 .chat-turn + .chat-turn { margin-top: 4px; }

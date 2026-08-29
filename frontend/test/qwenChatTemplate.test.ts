@@ -28,3 +28,14 @@ describe("Qwen ChatML renderer", () => {
     expect(QWEN_CHAT_TEMPLATE_NAME).toBe("Chat Template · Qwen ChatML");
   });
 });
+
+describe("unknown passthrough role", () => {
+  it("renders unknown blocks as an unknown role, never as system", () => {
+    const document = normalizeContext("chat_completions", JSON.stringify({ messages: [{ role: "user", content: "hi" }], mystery_extension: { opaque: true } }));
+    const unknown = document.blocks.find((item) => item.kind === "unknown");
+    expect(unknown).toBeDefined();
+    const rendered = renderQwenChatML(document);
+    expect(rendered).toContain("<|im_start|>unknown\n");
+    expect(rendered).not.toContain("<|im_start|>system\n{\"opaque\":true}");
+  });
+});

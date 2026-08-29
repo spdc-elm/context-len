@@ -200,3 +200,21 @@ describe("stream reducer semantics", () => {
     expect(state.statusDetail).toContain("without a protocol terminal");
   });
 });
+
+describe("responses custom tool input streaming", () => {
+  it("folds custom_tool_call_input deltas into the tool call arguments", () => {
+    const records: StreamEventRecord[] = [
+      { ordinal: 0, data: JSON.stringify({ type: "response.output_item.added", item: { id: "ctc_1", type: "custom_tool_call", call_id: "call_1", name: "exec" } }), complete: true },
+      { ordinal: 1, data: JSON.stringify({ type: "response.custom_tool_call_input.delta", item_id: "ctc_1", delta: "const r" }), complete: true },
+      { ordinal: 2, data: JSON.stringify({ type: "response.custom_tool_call_input.delta", item_id: "ctc_1", delta: " = await run()" }), complete: true },
+      { ordinal: 3, data: JSON.stringify({ type: "response.custom_tool_call_input.done", item_id: "ctc_1", input: "const r = await run();\n" }), complete: true },
+    ];
+    const state = feed("responses", records);
+    const call = state.blocks.find((block) => block.id === "live:ctc_1");
+    expect(call?.kind).toBe("tool_call");
+    expect(call?.toolName).toBe("exec");
+    // The done event replaces the streamed fragments with the final input.
+    expect(call?.rawArguments).toBe("const r = await run();\n");
+    expect(state.blocks.filter((block) => block.kind === "unknown")).toHaveLength(0);
+  });
+});

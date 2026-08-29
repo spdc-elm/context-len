@@ -61,3 +61,20 @@ describe("normalizeContext", () => {
     expect(document.warnings.length).toBeGreaterThan(0);
   });
 });
+
+describe("Responses custom tool items", () => {
+  it("maps custom_tool_call_output to a tool result block", () => {
+    const document = normalizeContext("responses", JSON.stringify({
+      input: [
+        { type: "custom_tool_call", id: "ctc_1", call_id: "call_1", name: "exec", input: "ls -la" },
+        { type: "custom_tool_call_output", id: "ctco_1", call_id: "call_1", output: "total 0" },
+      ],
+    }));
+    const call = document.blocks.find((item) => item.kind === "tool_call");
+    expect(call?.toolName).toBe("exec");
+    const result = document.blocks.find((item) => item.kind === "tool_result");
+    expect(result).toBeDefined();
+    expect(result?.callId).toBe("call_1");
+    expect(result?.text).toContain("total 0");
+  });
+});

@@ -18,7 +18,7 @@ Body bytes are stored externally and retrieved by artifact id. `sha256` is over 
 
 States are `received, request_held, upstream_running, response_held, completed, dropped, cancelled, failed`.
 
-Cancellation semantics follow the upstream leg, not the downstream connection's post-delivery liveness: a fully captured (upstream-EOF) response completes the exchange even when the client disconnected right after the final bytes, while a disconnect that interrupts the stream cancels the exchange and retains the bytes captured so far as an incomplete response artifact (`response.upstream`; the direct path also keeps the streamed `response.downstream` copy).
+Cancellation semantics follow the upstream leg, not the downstream connection's post-delivery liveness. Once the protocol terminal record (Responses `response.completed`/`failed`/`incomplete`, Chat Completions `[DONE]`, Anthropic `message_stop`) has been written toward the client, a client disconnect no longer cancels the exchange: the gateway drains the remaining upstream body (bounded by a 5s drain timeout by default), the exchange completes, and the artifact is complete when EOF was observed or incomplete with an explicit warning otherwise. A disconnect before the terminal record cancels the exchange and retains the bytes captured so far as an incomplete response artifact (`response.upstream`; the direct path also keeps the streamed `response.downstream` prefix).
 
 ## Commands
 

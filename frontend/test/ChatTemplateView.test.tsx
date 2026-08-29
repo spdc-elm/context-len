@@ -304,3 +304,33 @@ describe("ChatTemplateView", () => {
     expect(rendered.textContent).toContain("growing answer");
   });
 });
+
+describe("unknown passthrough visibility", () => {
+  const requestWithExtension = JSON.stringify({
+    messages: [{ role: "user", content: "hi" }],
+    mystery_extension: { opaque: true },
+    another_extension: { also: "opaque" },
+  });
+
+  it("hides unknown blocks by default and reports the hidden count", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: requestWithExtension });
+    const toggle = rendered.querySelector(".chat-unknown-toggle");
+    expect(toggle).not.toBeNull();
+    expect(toggle?.textContent).toContain("unknown (2)");
+    expect(rendered.textContent).not.toContain("<|im_start|>unknown");
+    expect(rendered.textContent).toContain("<|im_start|>user");
+  });
+
+  it("reveals unknown blocks behind the toggle and hides them again", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: requestWithExtension });
+    click(rendered.querySelector(".chat-unknown-toggle"));
+    expect(rendered.textContent).toContain("<|im_start|>unknown");
+    click(rendered.querySelector(".chat-unknown-toggle"));
+    expect(rendered.textContent).not.toContain("<|im_start|>unknown");
+  });
+
+  it("shows no toggle when nothing is unknown", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    expect(rendered.querySelector(".chat-unknown-toggle")).toBeNull();
+  });
+});
