@@ -125,7 +125,7 @@ Chat Template 是连续上下文流，不使用普通聊天产品的左右气泡
 
 - 每个 ChatML 段是一个大块，自带色边框；段内第一层内容直接使用该块对齐（不再嵌套第二条竖线）。
 - 深层嵌套作用域（tools / tool_call / tool_response / think / 内容 XML）用更轻的 1px 纵向缩进线，与顶层大块边框区分层级。
-- Chat Template 顶层 ChatML blocks 默认全部折叠，首屏只显示 marker、role 和摘要边界，避免长上下文淹没工作区；用户可逐块展开查看内容。
+- Chat Template 顶层 ChatML blocks 默认展开，让首屏先看到连续上下文；深层嵌套作用域（XML 标签、tools / tool_call / tool_response / think）和 JSON 容器默认折叠。工具栏提供一键 `Collapse all` / `Expand all`，Unknown passthrough 默认隐藏并可单独显隐。
 - Chat Template 首次渲染和 live stream 更新默认跟随滚动底部；一旦用户主动离开底部，视口位置锁定，新 block 只在视口下方增长，不自动拉回或抖动。用户重新滚到末尾后恢复跟随最新内容；切换 artifact 会开启新的贴底阅读会话。
 - 交换标题行内直接显示 status、request gate、response gate 和 updated，不再占用独立 metadata 行。Raw 的 Search 与视图切换、artifact 选择合并到同一紧凑 viewer toolbar；Search 仅在 Raw（或双栏中的 Raw pane）出现并支持自动展开匹配路径、高亮与一键清除。artifact SHA 不在该工具栏显示。
 - 宽视口（宽度与宽高比达标）默认 Raw 与 Chat Template 并排分栏，共享同一 artifact 选择，分隔条可拖动（20%–80%）；双栏顺序为 Chat Template 左、Raw 右。点击任一 Tab 退出分栏，`\\` 快捷键切换；窄视口自动回退单栏。用户显式选择持久化；分栏是纯显示投影，不改变 artifact 语义。

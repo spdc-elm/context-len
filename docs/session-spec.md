@@ -41,6 +41,7 @@ session 视图的行（一棵树一行）：
 - ctx：最新完成轮次的上下文占用（见第 3 节；未知显示 `—`）。
 - preview：首条 user 消息文本截断（约 96 字符、折叠空白、单行）；无 user 消息时回退到任意消息的首个文本块；再回退到 `model · N msgs`。preview 始终取自原始 inbound artifact。
 - fork 数、rollout 计数（`×N`）、更新时间。
+- Session 行点击最新轮次并进入跟随模式：同一 session 捕获到新的 `Tn` 时，选中项自动移动到该最新轮次；展开/折叠只改变树的可见性，不改变跟随状态。点击具体成员 `Tn` 则固定到该 exchange，后续新轮次不抢占选中项。
 
 flat 视图（可切换，gate 调试用）保持现有单 exchange 行，但应用同样的字段升级：移除 URL、加 preview / model / ctx。exchange_id 从行内移除（详情面板仍可见）。
 

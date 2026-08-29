@@ -64,11 +64,13 @@ function click(element: Element | null): void {
 }
 
 function expandTopLevelBlocks(rendered: HTMLElement): void {
-  // Re-query after each click: React replaces the segment subtree on state
-  // updates, so a previously captured NodeList contains detached buttons.
+  // Most historical tests need the readable outer context plus nested XML
+  // and JSON. Leave the two intentionally compact inner scopes folded.
   while (true) {
-    const button = [...rendered.querySelectorAll('.ctx-block > .ctx-tag-line > button.chevron')]
-      .find((item) => item.getAttribute("aria-expanded") !== "true");
+    const button = [...rendered.querySelectorAll('button.chevron')]
+      .find((item) => item.getAttribute("aria-expanded") !== "true"
+        && !item.closest('[data-ctx-tag="think"]')
+        && !item.closest('.ctx-json-text'));
     if (!button) return;
     click(button);
   }
@@ -84,13 +86,37 @@ afterEach(() => {
 });
 
 describe("ChatTemplateView", () => {
-  it("starts with every ChatML block collapsed", () => {
-    const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
-    const blocks = [...rendered.querySelectorAll('.ctx-block > .ctx-tag-line')];
-    expect(blocks.length).toBeGreaterThan(0);
-    expect(blocks.every((block) => block.querySelector('.chevron')?.getAttribute("aria-expanded") === "false")).toBe(true);
-    expect(rendered.textContent).not.toContain("You are precise.");
+  it("opens outer ChatML blocks and folds inner scopes by default", () => {
+    const request = JSON.stringify({ messages: [{ role: "user", content: "Use <reference><name>docs</name></reference>" }] });
+    const rendered = renderView({ protocol: "chat_completions", body: request });
+    const outer = [...rendered.querySelectorAll('.ctx-block > .ctx-tag-line')];
+    expect(outer.length).toBeGreaterThan(0);
+    expect(outer[0].querySelector(".chevron")?.getAttribute("aria-expanded")).toBe("true");
+    expect(rendered.querySelector('[data-ctx-tag="reference"]')?.querySelector(".chevron")?.getAttribute("aria-expanded")).toBe("false");
+    expect(rendered.textContent).toContain("<|im_start|>user");
   });
+
+  it("provides one-click outer collapse and expand controls", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    const fold = rendered.querySelector(".chat-fold-toggle");
+    expect(fold?.textContent).toBe("Collapse all");
+    click(fold);
+    expect(rendered.querySelector(".chat-fold-toggle")?.textContent).toBe("Expand all");
+    expect([...rendered.querySelectorAll('.ctx-block > .ctx-tag-line > button.chevron')]
+      .every((button) => button.getAttribute("aria-expanded") === "false")).toBe(true);
+    click(rendered.querySelector(".chat-fold-toggle"));
+    expect(rendered.querySelector(".chat-fold-toggle")?.textContent).toBe("Collapse all");
+    expect([...rendered.querySelectorAll('.ctx-block > .ctx-tag-line > button.chevron')]
+      .every((button) => button.getAttribute("aria-expanded") === "true")).toBe(true);
+  });
+
+  it("folds inner XML and JSON scopes while outer blocks stay readable", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    const call = rendered.querySelector('[data-ctx-tag="tool_call"].ctx-template-scope');
+    expect(call?.querySelector(".chevron")?.getAttribute("aria-expanded")).toBe("false");
+    expect(call?.textContent).toContain("<tool_call>…</tool_call>");
+  });
+
 
   it("renders nested ChatML markers, tool tags and collapsible JSON", () => {
     const rendered = renderView({ protocol: "chat_completions", body: chatRequest });

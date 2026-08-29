@@ -142,4 +142,35 @@ describe("TrafficQueue", () => {
     setFilter("Filter exchanges by text", "no-such-thing");
     expect(container.textContent).toContain("No exchanges match the current filters.");
   });
+
+  it("passes follow mode only for the session row, not a concrete member", () => {
+    const child = snapshot({
+      exchange_id: "ex-chat-child",
+      protocol: "chat_completions",
+      state: "upstream_running",
+      created_at: "2026-08-27T10:00:02.000Z",
+      updated_at: "2026-08-27T10:00:03.000Z",
+      summary: { model: "qwen3-235b", message_count: 22, preview: "next", context_tokens: 100 },
+      session: { session_id: "sess-chat", depth: 2, position: "pos-child", parent_exchange_id: "ex-chat" },
+    });
+    const calls: Array<[string, string | undefined]> = [];
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root.render(<TrafficQueue exchanges={[chatExchange, child]} selectedExchangeId={chatExchange.exchange_id} onSelect={(id, follow) => calls.push([id, follow])} />);
+    });
+    const sessionRow = container.querySelector(".traffic-session > .traffic-row");
+    if (!sessionRow) throw new Error("session row not found");
+    act(() => sessionRow.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(calls.at(-1)).toEqual(["ex-chat-child", "sess-chat"]);
+
+    const chevron = container.querySelector(".traffic-session-chevron");
+    if (!chevron) throw new Error("session expander not found");
+    act(() => chevron.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const member = container.querySelector(".traffic-member-row");
+    if (!member) throw new Error("member row not found");
+    act(() => member.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(calls.at(-1)).toEqual(["ex-chat", undefined]);
+  });
 });

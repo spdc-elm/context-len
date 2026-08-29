@@ -5,7 +5,16 @@ import {
   type GateMode,
   type WorkspacePolicy,
 } from "./contracts";
-import { applyStreamRecord, applyStreamTerminus, initialLiveStream, type LiveStreamState } from "./streamIr";
+import {
+  groupSessions,
+  type SessionGroup,
+} from "./sessionTree";
+import {
+  applyStreamRecord,
+  applyStreamTerminus,
+  initialLiveStream,
+  type LiveStreamState,
+} from "./streamIr";
 
 export type DetailTab = "raw" | "chat_template" | "sse";
 
@@ -22,6 +31,8 @@ export interface WorkspaceState {
   exchanges: ExchangeSnapshot[];
   revisions: Record<string, number>;
   selectedExchangeId?: string;
+  /** When set, selecting the session row follows that session's latest turn. */
+  followSessionId?: string;
   activeTab: DetailTab;
   policy: WorkspacePolicy;
   loading: boolean;
@@ -37,7 +48,7 @@ export type WorkspaceAction =
   | { type: "load_succeeded"; exchanges: ExchangeSnapshot[]; policy: WorkspacePolicy }
   | { type: "load_failed"; error: string }
   | { type: "clear_error" }
-  | { type: "select_exchange"; exchangeId: string }
+  | { type: "select_exchange"; exchangeId: string; followSessionId?: string }
   | { type: "set_tab"; tab: DetailTab }
   | { type: "set_policy"; gate: "request_gate" | "response_gate"; value: GateMode }
   | { type: "policy_saved"; policy: WorkspacePolicy }
@@ -59,6 +70,19 @@ export const initialWorkspaceState: WorkspaceState = {
   search: "",
   streams: {},
 };
+
+function latestSessionExchangeId(exchanges: ExchangeSnapshot[], sessionId: string | undefined): string | undefined {
+  if (!sessionId) return undefined;
+  const group = groupSessions(exchanges).find((item: SessionGroup) => item.sessionId === sessionId);
+  return group?.latest.exchange_id;
+}
+
+function followLatestSession(state: WorkspaceState): WorkspaceState {
+  if (!state.followSessionId) return state;
+  const latest = latestSessionExchangeId(state.exchanges, state.followSessionId);
+  if (!latest || latest === state.selectedExchangeId) return state;
+  return { ...state, selectedExchangeId: latest, loadedBodies: {}, search: "" };
+}
 
 function revisionValue(exchange: ExchangeSnapshot): number {
   return typeof exchange.revision === "number" && Number.isFinite(exchange.revision) ? exchange.revision : 0;
@@ -154,12 +178,12 @@ function upsertExchange(state: WorkspaceState, exchange: ExchangeSnapshot, revis
   const exchanges = found
     ? state.exchanges.map((item) => (item.exchange_id === exchange.exchange_id ? exchange : item))
     : [exchange, ...state.exchanges];
-  return {
+  return followLatestSession({
     ...state,
     exchanges,
     revisions: { ...state.revisions, [exchange.exchange_id]: revision },
     selectedExchangeId: state.selectedExchangeId ?? exchange.exchange_id,
-  };
+  });
 }
 
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
@@ -169,7 +193,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "load_succeeded": {
       const exchanges = action.exchanges.map(normalizeSnapshot);
       const revisions = Object.fromEntries(exchanges.map((exchange) => [exchange.exchange_id, revisionValue(exchange)]));
-      return {
+      const next = {
         ...state,
         exchanges,
         revisions,
@@ -180,13 +204,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         loading: false,
         error: undefined,
       };
+      return followLatestSession(next);
     }
     case "load_failed":
       return { ...state, loading: false, error: action.error };
     case "clear_error":
       return { ...state, error: undefined };
     case "select_exchange":
-      return { ...state, selectedExchangeId: action.exchangeId, loadedBodies: {}, search: "" };
+      return { ...state, selectedExchangeId: action.exchangeId, followSessionId: action.followSessionId, loadedBodies: {}, search: "" };
     case "set_tab":
       return { ...state, activeTab: action.tab };
     case "set_policy":

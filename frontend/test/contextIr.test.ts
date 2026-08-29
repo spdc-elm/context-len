@@ -78,3 +78,13 @@ describe("Responses custom tool items", () => {
     expect(result?.text).toContain("total 0");
   });
 });
+
+describe("Responses lenient message typing", () => {
+  it("treats a role-bearing input item without type as a message", () => {
+    const document = normalizeContext("responses", JSON.stringify({
+      input: [{ role: "user", content: [{ type: "input_text", text: "hi" }] }],
+    }));
+    expect(document.blocks[0].kind).toBe("user");
+    expect(document.blocks[0].text).toBe("hi");
+  });
+});

@@ -105,7 +105,13 @@ function buildGroup(sessionId: string, members: ExchangeSnapshot[]): SessionGrou
   };
   for (const root of roots) walk(root);
 
-  const latest = sorted[sorted.length - 1];
+  const latest = [...sorted].sort((left, right) => {
+    const depthDelta = (right.session?.depth ?? 0) - (left.session?.depth ?? 0);
+    if (depthDelta !== 0) return depthDelta;
+    const updatedDelta = Date.parse(right.updated_at) - Date.parse(left.updated_at);
+    if (updatedDelta !== 0) return updatedDelta;
+    return right.exchange_id.localeCompare(left.exchange_id);
+  })[0] ?? sorted[sorted.length - 1];
   const models: string[] = [];
   for (const exchange of [...sorted].reverse()) {
     const model = exchange.summary?.model;

@@ -84,7 +84,11 @@ function isAssistantEcho(protocol: string, message: unknown): boolean {
   if (protocol === "responses") {
     const type = typeof message.type === "string" ? message.type : "";
     if (type === "function_call" || type === "reasoning" || type === "custom_tool_call") return true;
-    if (type === "message") return message.role === "assistant" || message.role === undefined;
+    // Mirror the backend's lenient message rule: a role-bearing item
+    // without an explicit type is still a message.
+    if (type === "message" || (type === "" && typeof message.role === "string")) {
+      return message.role === "assistant" || message.role === undefined;
+    }
     return false;
   }
   return message.role === "assistant";

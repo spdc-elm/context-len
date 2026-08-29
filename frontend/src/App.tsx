@@ -202,7 +202,7 @@ export function App({ api }: AppProps) {
           selectedExchangeId={state.selectedExchangeId}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
-          onSelect={(exchangeId) => dispatch({ type: "select_exchange", exchangeId })}
+          onSelect={(exchangeId, followSessionId) => dispatch({ type: "select_exchange", exchangeId, followSessionId })}
         />
         <ExchangeDetail
           exchange={exchange}

@@ -140,12 +140,47 @@ describe("workspace reducer", () => {
     expect(state.streams[exchange.exchange_id]?.blocks.find((block) => block.id === "live:msg_1")?.text).toBe("hi there");
   });
 
-  it("ignores stream events for unknown exchanges", () => {
-    const event: ExchangeEvent = {
-      event_id: "s", exchange_id: "ghost", revision: 0, kind: "stream_event", created_at: "2026-01-01T00:00:00Z",
-      artifact_refs: [], snapshot_delta: { exchange_id: "ghost" }, stream: { ordinal: 0, data: "{}", complete: true },
+  it("follows the latest turn only after selecting a session row", () => {
+    const root = snapshot("session-root");
+    root.state = "completed";
+    root.updated_at = "2026-01-01T00:00:01.000Z";
+    root.session = { session_id: "session-follow", depth: 1, position: "p1", root: true };
+    const child = snapshot("session-child");
+    child.state = "upstream_running";
+    child.created_at = "2026-01-01T00:00:02.000Z";
+    child.updated_at = "2026-01-01T00:00:03.000Z";
+    child.session = { session_id: "session-follow", depth: 2, position: "p2", parent_exchange_id: root.exchange_id };
+    const childCreated: ExchangeEvent = {
+      event_id: "child-created",
+      exchange_id: child.exchange_id,
+      revision: 1,
+      kind: "exchange_created",
+      created_at: child.created_at,
+      artifact_refs: [],
+      snapshot_delta: {
+        exchange_id: child.exchange_id,
+        protocol: child.protocol,
+        state: child.state,
+        policy: child.policy,
+        request: { envelope: child.request.envelope, artifact_refs: child.request.artifact_refs },
+        response: { envelope: child.response.envelope, artifact_refs: child.response.artifact_refs },
+        warnings: [],
+        created_at: child.created_at,
+        updated_at: child.updated_at,
+        summary: child.summary,
+        session: child.session,
+      },
     };
-    const state = workspaceReducer(initialWorkspaceState, { type: "event_received", event });
-    expect(state.streams["ghost"]).toBeUndefined();
+    const loaded = workspaceReducer(initialWorkspaceState, { type: "load_succeeded", exchanges: [root], policy: root.policy });
+
+    const following = workspaceReducer(loaded, { type: "select_exchange", exchangeId: root.exchange_id, followSessionId: "session-follow" });
+    const advanced = workspaceReducer(following, { type: "event_received", event: childCreated });
+    expect(advanced.selectedExchangeId).toBe(child.exchange_id);
+    expect(advanced.followSessionId).toBe("session-follow");
+
+    const pinned = workspaceReducer(loaded, { type: "select_exchange", exchangeId: root.exchange_id });
+    const pinnedAfterChild = workspaceReducer(pinned, { type: "event_received", event: childCreated });
+    expect(pinnedAfterChild.selectedExchangeId).toBe(root.exchange_id);
+    expect(pinnedAfterChild.followSessionId).toBeUndefined();
   });
 });

@@ -9,7 +9,7 @@ interface TrafficQueueProps {
   selectedExchangeId?: string;
   collapsed?: boolean;
   onToggle?: () => void;
-  onSelect: (exchangeId: string) => void;
+  onSelect: (exchangeId: string, followSessionId?: string) => void;
 }
 
 type QueueView = "sessions" | "exchanges";
@@ -306,7 +306,7 @@ function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }:
   expanded: boolean;
   selectedExchangeId?: string;
   onToggle: () => void;
-  onSelect: (exchangeId: string) => void;
+  onSelect: (exchangeId: string, followSessionId?: string) => void;
 }) {
   const stats = statsLine(group.latest.summary);
   const turnBadges = [
@@ -321,7 +321,7 @@ function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }:
         role="option"
         aria-selected={group.latest.exchange_id === selectedExchangeId}
         className={`traffic-row ${group.latest.exchange_id === selectedExchangeId ? "selected" : ""}`}
-        onClick={() => onSelect(group.latest.exchange_id)}
+        onClick={() => onSelect(group.latest.exchange_id, group.sessionId)}
       >
         <div className="traffic-row-top">
           <span className={`protocol-dot protocol-${group.protocol}`} aria-hidden="true" />

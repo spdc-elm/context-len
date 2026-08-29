@@ -250,7 +250,7 @@ function blockToSegment(block: ContextBlock, index: number): TagSegment {
     marker: true,
     blockKind: block.kind,
     pointer: block.sourcePointer,
-    defaultOpen: block.id.startsWith("live:"),
+    defaultOpen: true,
     children,
   };
 }
@@ -298,7 +298,7 @@ function JsonNode({
   const entries: Array<[string, unknown]> = isArray
     ? (value as unknown[]).map((item, index) => [String(index), item])
     : Object.entries(value as Record<string, unknown>);
-  const open = collapsed[id] ?? depth <= 3;
+  const open = collapsed[id] ?? false;
   const brace = isArray ? "[" : "{";
   const close = isArray ? "]" : "}";
   const label = `Toggle JSON ${brace}${id}`;
@@ -356,7 +356,8 @@ function SegmentList({ segments, depth, collapsed, onToggle }: { segments: Segme
 }
 
 function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment; depth: number } & CollapseProps) {
-  const open = collapsed[segment.id] ?? segment.defaultOpen ?? true;
+  const defaultOpen = segment.defaultOpen ?? (segment.marker ? true : false);
+  const open = collapsed[segment.id] ?? defaultOpen;
   const header = tagHeader(segment.name, segment.marker);
   const footer = tagFooter(segment.name, segment.marker);
   const headerClass = segment.marker ? "ctx-marker" : "ctx-inner-tag";
@@ -377,7 +378,7 @@ function TagView({ segment, depth, collapsed, onToggle }: { segment: TagSegment;
       data-source-json-pointer={segment.pointer}
     >
       <div className="ctx-tag-line">
-        <Chevron open={open} onToggle={() => onToggle(segment.id, segment.defaultOpen ?? true)} label={`Toggle ${header}`} />
+        <Chevron open={open} onToggle={() => onToggle(segment.id, defaultOpen)} label={`Toggle ${header}`} />
         <code className={headerClass}>{header}</code>
         {!open && (
           <>
@@ -433,6 +434,30 @@ function namespaceBlocks(blocks: ContextBlock[], namespace: string): ContextBloc
 
 function documentForBlocks(protocol: string, blocks: ContextBlock[]): ContextDocument {
   return { protocol, blocks, source: undefined, sourceText: "", providerExtensions: {}, passthrough: [], warnings: [] };
+}
+
+function jsonNodeIds(id: string, value: unknown): string[] {
+  if (typeof value === "string") {
+    const nested = parseJsonContainer(value);
+    return nested === undefined ? [] : jsonNodeIds(`${id}~`, nested);
+  }
+  if (value === null || typeof value !== "object") return [];
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [String(index), item] as const)
+    : Object.entries(value as Record<string, unknown>);
+  return [id, ...entries.flatMap(([key, child]) => jsonNodeIds(`${id}/${key}`, child))];
+}
+
+function segmentIds(segments: Segment[]): string[] {
+  return segments.flatMap((segment) => {
+    if (segment.kind === "tag") return [segment.id, ...segmentIds(segment.children)];
+    if (segment.kind === "json") return jsonNodeIds(segment.id, segment.value);
+    return [];
+  });
+}
+
+function defaultOpenForSegment(segment: TagSegment): boolean {
+  return segment.defaultOpen ?? (segment.marker ? true : false);
 }
 
 function TurnBoundary({ turn, isLast, streaming }: { turn: MergedTurn; isLast: boolean; streaming: boolean }) {
@@ -538,6 +563,27 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
     return source.filter((block) => block.kind === "unknown").length;
   }, [useSessionScope, turns, streamFromBody, document, live]);
 
+  const segmentGroups = useMemo(
+    () => (useSessionScope ? sessionSegments : [segments]),
+    [useSessionScope, sessionSegments, segments],
+  );
+  const allSegmentIds = useMemo(
+    () => [...new Set(segmentGroups.flatMap((group) => segmentIds(group)))],
+    [segmentGroups],
+  );
+  const outerSegments = useMemo(
+    () => segmentGroups.flatMap((group) => group.filter((segment): segment is TagSegment => segment.kind === "tag")),
+    [segmentGroups],
+  );
+  const allOuterClosed = outerSegments.length > 0 && outerSegments.every((segment) => {
+    const open = collapsed[segment.id] ?? defaultOpenForSegment(segment);
+    return !open;
+  });
+  const toggleAll = () => {
+    const nextOpen = allOuterClosed;
+    setCollapsed(Object.fromEntries(allSegmentIds.map((id) => [id, nextOpen])));
+  };
+
   useLayoutEffect(() => {
     setCollapsed({});
     // Switching artifacts starts a fresh reading session. The next layout
@@ -629,6 +675,16 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
             onClick={() => setShowUnknown((current) => !current)}
           >
             {showUnknown ? "Hide" : "Show"} unknown ({unknownCount})
+          </button>
+        ) : null}
+        {outerSegments.length > 0 ? (
+          <button
+            type="button"
+            className="chat-fold-toggle"
+            aria-label={allOuterClosed ? "Expand all ChatML blocks" : "Collapse all ChatML blocks"}
+            onClick={toggleAll}
+          >
+            {allOuterClosed ? "Expand all" : "Collapse all"}
           </button>
         ) : null}
       </div>

@@ -146,7 +146,11 @@ function addMessage(out: ContextBlock[], message: unknown, sourcePointer: string
 }
 function addResponsesItem(out: ContextBlock[], item: unknown, sourcePointer: string): void {
   if (!isRecord(item)) { out.push(block("unknown", sourcePointer, item, { passthrough: item, content: [part("unknown", item, sourcePointer)] })); return; }
-  const type = typeof item.type === "string" ? item.type : "unknown";
+  let type = typeof item.type === "string" ? item.type : "unknown";
+  // Responses message items carry an explicit type, but a role-bearing item
+  // without one is still a message: the backend summary already counts it
+  // that way, so the projection must not diverge into unknown passthrough.
+  if (type === "unknown" && typeof item.role === "string" && item.role !== "") type = "message";
   if (type === "message") addTextOrParts(out, roleKind(item.role ?? "assistant"), item.content, pointer(sourcePointer, "content"), item);
   else if (type === "function_call" || type === "custom_tool_call") addToolCall(out, item, sourcePointer);
   else if (type === "function_call_output" || type === "custom_tool_call_output") addToolResult(out, item, sourcePointer);

@@ -347,6 +347,8 @@ body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
 .chat-unknown-toggle { margin-left: auto; padding: 3px 9px; border: 1px dashed var(--line-bright); border-radius: 6px; color: var(--muted); background: transparent; font-size: 10.5px; font-weight: 600; cursor: pointer; }
 .chat-unknown-toggle:hover { color: var(--text); border-color: var(--muted); }
 .chat-unknown-toggle.active { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
+.chat-fold-toggle { padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: transparent; font-size: 10.5px; font-weight: 600; cursor: pointer; }
+.chat-fold-toggle:hover { color: var(--text); border-color: var(--muted); }
 .chat-session-meta { color: var(--muted); font-size: 10.5px; letter-spacing: .04em; }
 .chat-turn { position: relative; }
 .chat-turn + .chat-turn { margin-top: 4px; }

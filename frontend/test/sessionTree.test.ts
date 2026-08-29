@@ -123,4 +123,13 @@ describe("groupSessions", () => {
     expect(sessionMatchesFilters(group, "", "all", "all", "model-b")).toBe(true);
     expect(sessionMatchesFilters(group, "", "all", "all", "model-z")).toBe(false);
   });
+
+  it("chooses the highest-depth turn as the session latest", () => {
+    const exchanges = sessionExchanges([
+      { id: "root", depth: 1, updatedAt: "2026-08-27T10:00:01.000Z" },
+      { id: "child", depth: 2, parent: "root", updatedAt: "2026-08-27T09:00:00.000Z" },
+    ]);
+    const [group] = groupSessions(exchanges);
+    expect(group.latest.exchange_id).toBe("child");
+  });
 });
