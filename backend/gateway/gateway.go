@@ -27,6 +27,7 @@ import (
 	"context-lens/backend/inspection"
 	"context-lens/backend/persistence"
 	"context-lens/backend/policy"
+	"context-lens/backend/session"
 	"context-lens/backend/transport"
 	"context-lens/backend/wire"
 )
@@ -286,12 +287,19 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	requestEnvelope := wire.RequestFromHTTP(r)
 	protocol := detectProtocol(requestEnvelope, requestArtifact.Bytes())
+	// Summary is an additive observation of the original inbound bytes. It is
+	// computed after capture and never becomes transport input; an unparseable
+	// or non-chat body simply yields an empty summary that is dropped.
+	var summary *session.Summary
+	if requestSummary := session.SummarizeRequest(inspection.Protocol(protocol), requestArtifact.Bytes()); !requestSummary.Empty() {
+		summary = &requestSummary
+	}
 	committed := &writeState{}
 	directWritten := &atomic.Bool{}
 	direct := !pol.ResponseHeld()
 
 	upstream := func(ctx context.Context, req exchange.UpstreamRequest) (exchange.UpstreamResponse, error) {
-		return g.roundTrip(ctx, r, req, w, committed, directWritten, direct)
+		return g.roundTrip(ctx, r, req, w, committed, directWritten, direct, protocol)
 	}
 	downstream := func(ctx context.Context, resp exchange.DownstreamResponse) error {
 		// In the pass/pass (and hold/pass) path roundTrip streams directly as
@@ -314,6 +322,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Downstream:      downstream,
 		Context:         r.Context(),
 		Events:          g.eventSink,
+		Summary:         summary,
 	})
 	if err != nil {
 		g.writeStoreError(w, err)
@@ -397,7 +406,7 @@ func captureReadCloser(ctx context.Context, body io.ReadCloser, opts wire.Captur
 	}
 }
 
-func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exchange.UpstreamRequest, w http.ResponseWriter, committed *writeState, directWritten *atomic.Bool, direct bool) (exchange.UpstreamResponse, error) {
+func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exchange.UpstreamRequest, w http.ResponseWriter, committed *writeState, directWritten *atomic.Bool, direct bool, protocol string) (exchange.UpstreamResponse, error) {
 	if err := contextError(ctx); err != nil {
 		return exchange.UpstreamResponse{}, err
 	}
@@ -459,6 +468,7 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 		if err := g.registry.AddArtifactRef(req.ExchangeID, false, downstreamArtifact.Ref()); err != nil {
 			return exchange.UpstreamResponse{}, err
 		}
+		g.noteContextTokens(req.ExchangeID, protocol, artifact.Bytes())
 		return exchange.UpstreamResponse{Envelope: envelopeWithTimes(resp, started), Artifact: artifact}, nil
 	}
 
@@ -477,6 +487,7 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 	if !artifact.Ref().Complete {
 		return exchange.UpstreamResponse{}, errors.New("gateway: response capture incomplete")
 	}
+	g.noteContextTokens(req.ExchangeID, protocol, artifact.Bytes())
 	return exchange.UpstreamResponse{
 		Envelope: envelopeWithTimes(resp, started),
 		Artifact: artifact,
@@ -781,6 +792,21 @@ func copyArtifact(source wire.BodyArtifact, stage, direction string) wire.BodyAr
 		return wire.NewIncompleteArtifact(source.Bytes(), opts)
 	}
 	return wire.NewArtifact(source.Bytes(), opts)
+}
+
+// noteContextTokens observes the upstream-reported input-token occupancy from
+// a completed response body and publishes it on the exchange summary. It is
+// an observation only: failures are dropped because a missing token count
+// must never affect the response the client receives.
+func (g *Gateway) noteContextTokens(exchangeID string, protocol string, body []byte) {
+	if g == nil || g.registry == nil {
+		return
+	}
+	tokens := session.ExtractContextTokens(inspection.Protocol(protocol), body)
+	if tokens == nil {
+		return
+	}
+	_ = g.registry.SetContextTokens(exchangeID, *tokens)
 }
 
 func (g *Gateway) eventSink(event exchange.Event) {

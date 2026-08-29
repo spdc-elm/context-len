@@ -479,6 +479,13 @@ func populateSSESections(projection *ProtocolProjection, protocol Protocol) {
 			if usage := objectFieldNode(pe.Payload, "usage"); usage != nil {
 				projection.UsageItems = append(projection.UsageItems, usage)
 			}
+			// Anthropic message_start carries the authoritative input usage on
+			// its embedded message object.
+			if message := objectFieldNode(pe.Payload, "message"); message != nil {
+				if usage := objectFieldNode(message, "usage"); usage != nil {
+					projection.UsageItems = append(projection.UsageItems, usage)
+				}
+			}
 			if output := objectFieldNode(pe.Payload, "output"); output != nil && output.Kind == JSONArray {
 				for _, item := range output.Items {
 					appendResponsesOutputItem(projection, item)

@@ -932,6 +932,7 @@ func redactSnapshot(in exchange.Snapshot) exchange.Snapshot {
 	out.Response.Envelope = in.Response.Envelope.Redacted()
 	out.Response.ArtifactRefs = append([]wire.ArtifactRef(nil), in.Response.ArtifactRefs...)
 	out.Warnings = append([]string(nil), in.Warnings...)
+	out.Summary = in.Summary.Clone()
 	return out
 }
 
@@ -961,6 +962,7 @@ func redactDelta(in exchange.SnapshotDelta) exchange.SnapshotDelta {
 		out.Response = &resp
 	}
 	out.Warnings = append([]string(nil), in.Warnings...)
+	out.Summary = in.Summary.Clone()
 	return out
 }
 

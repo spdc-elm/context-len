@@ -75,6 +75,16 @@ export interface ExchangePolicy {
   response_gate: GateMode;
 }
 
+/** Additive capture-time observation projection (docs/session-spec.md).
+ *  Derived from wire bytes by the backend; display-only. */
+export interface ExchangeSummary {
+  model?: string;
+  message_count?: number;
+  preview?: string;
+  tool_names?: string[];
+  context_tokens?: number;
+}
+
 export interface ExchangeSnapshot {
   exchange_id: string;
   protocol: Protocol | (string & {});
@@ -88,6 +98,8 @@ export interface ExchangeSnapshot {
   /** Server revisions are additive to the frozen snapshot and seed command CAS. */
   revision?: number;
   error?: string;
+  /** Capture-time observation projection; never transport input. */
+  summary?: ExchangeSummary;
   /** Server may add fields; renderers must leave unknown fields untouched. */
   [extension: string]: unknown;
 }
@@ -113,6 +125,7 @@ export interface ExchangeSnapshotDelta {
   warnings?: string[];
   created_at?: string;
   updated_at?: string;
+  summary?: ExchangeSummary;
 }
 
 

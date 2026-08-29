@@ -14,6 +14,7 @@ import (
 	"context-lens/backend/inspection"
 	"context-lens/backend/mutation"
 	"context-lens/backend/policy"
+	"context-lens/backend/session"
 	"context-lens/backend/wire"
 )
 
@@ -107,6 +108,7 @@ func (r *Registry) Create(p CreateParams) (*Exchange, error) {
 		UpdatedAt:  now,
 		Revision:   1,
 		Warnings:   []string{},
+		Summary:    p.Summary.Clone(),
 		Response:   ResponsePart{ArtifactRefs: []wire.ArtifactRef{}},
 		Request: RequestPart{
 			Envelope:     p.RequestEnvelope.Clone().Redacted(),
@@ -234,6 +236,32 @@ func (r *Registry) AddArtifactRef(exchangeID string, requestSide bool, ref wire.
 	} else {
 		delta.Response = cloneResponsePartPtr(e.snap.Response)
 	}
+	event, sink := e.commitLocked(EventUpdated, e.snap.State, delta)
+	e.mu.Unlock()
+	e.emitTo(sink, event)
+	return nil
+}
+
+// SetContextTokens records the upstream-reported input-token occupancy on
+// the exchange summary. It is an additive observation update: an exchange
+// that already reached a terminal state is left untouched so terminal events
+// stay final.
+func (r *Registry) SetContextTokens(exchangeID string, tokens int64) error {
+	e, ok := r.Get(exchangeID)
+	if !ok {
+		return ErrNotFound
+	}
+	e.mu.Lock()
+	if e.snap.State.Terminal() {
+		e.mu.Unlock()
+		return nil
+	}
+	if e.snap.Summary == nil {
+		e.snap.Summary = &session.Summary{}
+	}
+	value := tokens
+	e.snap.Summary.ContextTokens = &value
+	delta := SnapshotDelta{Summary: e.snap.Summary.Clone()}
 	event, sink := e.commitLocked(EventUpdated, e.snap.State, delta)
 	e.mu.Unlock()
 	e.emitTo(sink, event)
@@ -986,6 +1014,7 @@ func (e *Exchange) initialEvent(kind EventKind) Event {
 		Policy:     policyPtr(e.snap.Policy),
 		State:      e.snap.State,
 		UpdatedAt:  e.snap.UpdatedAt,
+		Summary:    e.snap.Summary.Clone(),
 	}
 	return Event{
 		EventID:       newEventID(),
@@ -1077,6 +1106,7 @@ func cloneSnapshot(s Snapshot) Snapshot {
 	s.Request = cloneRequestPart(s.Request)
 	s.Response = cloneResponsePart(s.Response)
 	s.Warnings = cloneStrings(s.Warnings)
+	s.Summary = s.Summary.Clone()
 	return s
 }
 
@@ -1108,6 +1138,7 @@ func cloneDelta(d SnapshotDelta) SnapshotDelta {
 		d.Policy = &p
 	}
 	d.Warnings = cloneStrings(d.Warnings)
+	d.Summary = d.Summary.Clone()
 	return d
 }
 

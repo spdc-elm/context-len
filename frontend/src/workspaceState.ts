@@ -91,6 +91,7 @@ function snapshotFromEvent(event: ExchangeEvent): ExchangeSnapshot | undefined {
     created_at: d.created_at ?? event.created_at,
     updated_at: d.updated_at ?? event.created_at,
     revision: event.revision,
+    summary: d.summary,
   });
 }
 

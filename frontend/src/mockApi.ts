@@ -187,6 +187,7 @@ function initialRecords(): MockRecord[] {
         warnings: ["Mock data only: no upstream request has been sent."],
         created_at: "2026-08-27T10:12:00.000Z",
         updated_at: "2026-08-27T10:12:00.000Z",
+        summary: { model: "mock-responses-model", message_count: 1, preview: "Hello from the mock", tool_names: ["lookup"], context_tokens: 12 },
       },
       {
         [responseRequestArtifact.artifact_id]: responsesRequest,
@@ -204,6 +205,7 @@ function initialRecords(): MockRecord[] {
         warnings: ["SSE body is held as opaque bytes until an explicit release command."],
         created_at: "2026-08-27T10:11:35.000Z",
         updated_at: "2026-08-27T10:11:58.000Z",
+        summary: { model: "mock-chat-model", message_count: 1, preview: "Stream a mock answer", tool_names: ["lookup"], context_tokens: 7 },
       },
       {
         [chatRequestArtifact.artifact_id]: chatRequest,
@@ -221,6 +223,7 @@ function initialRecords(): MockRecord[] {
         warnings: [],
         created_at: "2026-08-27T10:10:00.000Z",
         updated_at: "2026-08-27T10:10:03.000Z",
+        summary: { model: "mock-claude-model", message_count: 1, preview: "Inspect this request" },
       },
       {
         [anthropicRequestArtifact.artifact_id]: anthropicRequest,
