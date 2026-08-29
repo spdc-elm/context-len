@@ -2,13 +2,14 @@
 
 `context-lens` 是一个独立的 LLM 请求观察与拦截工作台。它以 HTTP 应用层 wire 数据为权威来源，把 Responses、Chat Completions、Anthropic Messages 请求和响应以原协议转发，同时提供人类可读的旁路解析视图，以及可审计的人工放行、人工回复和响应编辑。
 
-当前状态：透明代理核心 MVP 已完成；Chat Template MVP 的 Raw + Chat Template（含宽屏分栏）与 SSE 实时观察（typed stream_event、live Chat Template、SSE tab 实时事件）均已实现。产品契约与设计规范见 [`docs/chat-template-spec.md`](docs/chat-template-spec.md)、[`docs/protocol-contract.md`](docs/protocol-contract.md) 和 [`docs/runtime-contract.md`](docs/runtime-contract.md)。
+当前状态：透明代理核心 MVP 已完成；Chat Template MVP 的 Raw + Chat Template（含宽屏分栏）与 SSE 实时观察（typed stream_event、live Chat Template、SSE tab 实时事件）均已实现。产品契约与设计规范见 [`docs/chat-template-spec.md`](docs/chat-template-spec.md)、[`docs/protocol-contract.md`](docs/protocol-contract.md) 和 [`docs/runtime-contract.md`](docs/runtime-contract.md)；session 重建与观察面板的设计见 [`docs/session-spec.md`](docs/session-spec.md)（待实现）。
 
 ## 必读文档
 
 1. [`docs/protocol-contract.md`](docs/protocol-contract.md)：三协议、wire 保真、拦截状态机和观察边界
 2. [`docs/chat-template-spec.md`](docs/chat-template-spec.md)：Raw Tree、Qwen ChatML、Context IR 和 SSE 观察设计
 3. [`docs/runtime-contract.md`](docs/runtime-contract.md)：backend 与 workspace UI 的运行时接缝
+4. [`docs/session-spec.md`](docs/session-spec.md)：session 重建、fork/rollout 检测、队列面板与合并视图设计（待实现）
 
 ## 本地运行
 
