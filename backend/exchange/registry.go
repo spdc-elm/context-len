@@ -817,11 +817,10 @@ func (e *Exchange) executeUpstream(ctx context.Context, upstream UpstreamRoundTr
 		e.mu.Unlock()
 		return
 	}
-	if ctx.Err() != nil {
-		e.mu.Unlock()
-		e.finishContext(ctx.Err())
-		return
-	}
+	// A successful round trip means the response was fully captured (and, on
+	// the direct path, already streamed to the client). A downstream client
+	// that disconnected right after the final bytes must not turn that into
+	// a cancellation: record the artifact and let delivery settle the state.
 	e.responseArtifact = resp.Artifact
 	e.responseEnvelope = resp.Envelope.Clone()
 	e.responseAvailable = true
@@ -832,6 +831,11 @@ func (e *Exchange) executeUpstream(ctx context.Context, upstream UpstreamRoundTr
 		event, sink := e.commitLocked(EventResponseHeld, StateResponseHeld, delta)
 		e.mu.Unlock()
 		e.emitTo(sink, event)
+		if ctx.Err() != nil {
+			// The client is already gone, so a held response can never be
+			// delivered. The artifact stays recorded for inspection.
+			e.finishContext(ctx.Err())
+		}
 		return
 	}
 
@@ -882,10 +886,10 @@ func (e *Exchange) executeDelivery(ctx context.Context, response DownstreamRespo
 
 	var err error
 	if writer != nil {
-		if ctx.Err() != nil {
-			e.finishContext(ctx.Err())
-			return nil
-		}
+		// The writer itself observes the exchange context (writeDownstream
+		// checks it before touching the client), so a pre-flight check here
+		// would only cancel a delivery whose bytes already reached the client
+		// on the direct path.
 		err = writer(ctx, response)
 	}
 	if err != nil {
@@ -896,10 +900,9 @@ func (e *Exchange) executeDelivery(ctx context.Context, response DownstreamRespo
 		}
 		return nil
 	}
-	if ctx.Err() != nil {
-		e.finishContext(ctx.Err())
-		return nil
-	}
+	// A successful delivery completes the exchange even when the context
+	// ended while the final bytes were being flushed; the client received
+	// everything the writer wrote.
 	e.mu.Lock()
 	if e.snap.State.Terminal() {
 		e.operation = false
@@ -953,9 +956,24 @@ func (e *Exchange) finishContext(err error) {
 	}
 }
 
+// watchContext terminalizes the exchange when the lifecycle context ends.
+// While the upstream leg is running it deliberately commits nothing: the
+// round-trip hook observes the same context, so its own outcome decides the
+// exchange. A fully read upstream response completes even when the client
+// disconnected right after the final bytes; a mid-stream disconnect makes
+// the hook error and cancels through executeUpstream instead. Committing
+// cancelled here directly would race the hook's final success path and drop
+// a delivered response.
 func (e *Exchange) watchContext() {
 	select {
 	case <-e.ctx.Done():
+		e.mu.Lock()
+		running := e.snap.State == StateUpstreamRunning
+		e.mu.Unlock()
+		if running {
+			<-e.done
+			return
+		}
 		e.finishContext(e.ctx.Err())
 	case <-e.done:
 	}

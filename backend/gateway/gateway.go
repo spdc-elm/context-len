@@ -485,6 +485,10 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 	if direct {
 		artifact, _, err := g.captureAndStream(ctx, resp, w, committed)
 		if err != nil {
+			// The bytes already streamed to the client stay inspectable even
+			// when the stream was cut short (client disconnect or write
+			// failure): retain the partial capture instead of dropping it.
+			g.retainPartialResponse(req.ExchangeID, artifact, protocol, true)
 			return exchange.UpstreamResponse{}, err
 		}
 		directWritten.Store(true)
@@ -510,6 +514,9 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 		MaxBytes: g.maxBody,
 	})
 	if err != nil {
+		// The captured prefix of the upstream response remains available for
+		// review even though the leg was interrupted.
+		g.retainPartialResponse(req.ExchangeID, artifact, protocol, false)
 		return exchange.UpstreamResponse{}, err
 	}
 	if !artifact.Ref().Complete {
@@ -619,6 +626,34 @@ func incompleteResponseArtifact(resp *http.Response, body []byte) wire.BodyArtif
 		Stage: wire.StageResponseUpstream, Direction: wire.DirectionUpstream,
 		ContentType: resp.Header.Get("Content-Type"), ContentEncoding: resp.Header.Get("Content-Encoding"),
 	})
+}
+
+// retainPartialResponse preserves the observed bytes of an interrupted
+// response leg. A cancelled exchange keeps whatever the upstream sent
+// (response.upstream) and, when the direct path already streamed those bytes
+// to the client, the delivered copy (response.downstream). The artifacts stay
+// incomplete because no upstream EOF was observed. Retention is
+// observation-only: failures are dropped because they must never change the
+// transport error reported to the exchange.
+func (g *Gateway) retainPartialResponse(exchangeID string, artifact wire.BodyArtifact, protocol string, streamedDownstream bool) {
+	if g == nil || g.registry == nil || artifact.Len() == 0 {
+		return
+	}
+	_ = g.registry.AddWarnings(exchangeID, "response stream interrupted; partial response retained")
+	if err := g.putArtifact(artifact); err != nil {
+		return
+	}
+	if err := g.registry.AddArtifactRef(exchangeID, false, artifact.Ref()); err != nil {
+		return
+	}
+	if streamedDownstream {
+		downstream := copyArtifact(artifact, wire.StageResponseDownstream, wire.DirectionDownstream)
+		if err := g.putArtifact(downstream); err == nil {
+			_ = g.registry.AddArtifactRef(exchangeID, false, downstream.Ref())
+		}
+	}
+	g.noteContextTokens(exchangeID, protocol, artifact.Bytes())
+	g.noteResponseID(exchangeID, protocol, artifact.Bytes())
 }
 
 func (g *Gateway) writeDownstream(ctx context.Context, w http.ResponseWriter, response exchange.DownstreamResponse, committed *writeState) error {

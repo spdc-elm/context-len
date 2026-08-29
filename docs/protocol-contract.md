@@ -197,6 +197,7 @@ start/end timestamps
 - 请求 body 可通过 tee reader 复制到 artifact sink，同时直接送 upstream。
 - 响应 headers 到达后立即写给客户端，再用 streaming copy 转发 body。
 - 观察 sink 不应因为 UI 或磁盘暂时拥塞而阻塞业务流；若捕获不完整，标记 `capture_incomplete`，优先保证流量。
+- 客户端在流结束前后断开时，已被网关读到的 response 字节以 incomplete artifact 保留，cancelled exchange 不丢弃已观察内容；完整读到 upstream EOF 的交换即使在收尾瞬间断开也记为 completed。
 - 不插入 SSE heartbeat、注释或 synthetic event。
 
 ### Request hold

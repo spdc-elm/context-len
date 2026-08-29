@@ -18,6 +18,8 @@ Body bytes are stored externally and retrieved by artifact id. `sha256` is over 
 
 States are `received, request_held, upstream_running, response_held, completed, dropped, cancelled, failed`.
 
+Cancellation semantics follow the upstream leg, not the downstream connection's post-delivery liveness: a fully captured (upstream-EOF) response completes the exchange even when the client disconnected right after the final bytes, while a disconnect that interrupts the stream cancels the exchange and retains the bytes captured so far as an incomplete response artifact (`response.upstream`; the direct path also keeps the streamed `response.downstream` copy).
+
 ## Commands
 
 `forward_unchanged`, `forward_edited`, `manual_response`, `release_unchanged`, `release_edited`, `replace_response`, `drop`, `abort`.

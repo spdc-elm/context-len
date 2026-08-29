@@ -441,3 +441,63 @@ func waitForState(t *testing.T, e *Exchange, want State) Snapshot {
 		}
 	}
 }
+
+// A round trip that finished (full capture, bytes already delivered) must
+// complete even when the downstream client disconnected right after the final
+// bytes. Harnesses commonly abort the SSE request on the terminal event, so
+// treating that disconnect as a cancellation would mislabel a fully served
+// exchange and drop its response artifact.
+func TestUpstreamSuccessAfterClientDisconnectCompletes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := NewRegistry(policy.Default())
+	e, err := r.Create(CreateParams{
+		ExchangeID:      "late-disconnect",
+		Context:         ctx,
+		RequestArtifact: requestArtifact("request"),
+		Upstream: func(context.Context, UpstreamRequest) (UpstreamResponse, error) {
+			cancel() // the client disconnected while the hook was finishing
+			return response("ok", 200), nil
+		},
+		Downstream: func(context.Context, DownstreamResponse) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := waitExchange(t, e)
+	if final.State != StateCompleted {
+		t.Fatalf("state = %s, want completed: a fully captured response must not become a cancellation", final.State)
+	}
+	if len(final.Response.ArtifactRefs) == 0 {
+		t.Fatal("completed exchange lost its response artifact")
+	}
+}
+
+// A client disconnect that interrupts the upstream leg still cancels the
+// exchange; watchContext must not race the hook's own error path into a
+// double cancellation or a lost response.
+func TestClientDisconnectDuringUpstreamCancels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := make(chan struct{})
+	r := NewRegistry(policy.Default())
+	e, err := r.Create(CreateParams{
+		ExchangeID:      "mid-disconnect",
+		Context:         ctx,
+		RequestArtifact: requestArtifact("request"),
+		Upstream: func(hookCtx context.Context, _ UpstreamRequest) (UpstreamResponse, error) {
+			close(started)
+			<-hookCtx.Done()
+			return UpstreamResponse{}, hookCtx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	cancel()
+	final := waitExchange(t, e)
+	if final.State != StateCancelled {
+		t.Fatalf("state = %s, want cancelled", final.State)
+	}
+}
