@@ -14,6 +14,21 @@ MOCK_PID=""
 BACKEND_PID=""
 FRONTEND_PID=""
 
+port_in_use() {
+  local port="$1"
+  command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+backend_port="${BACKEND_ADDR##*:}"
+if port_in_use "$backend_port"; then
+  echo "Backend port $backend_port is already in use; stop the existing process or set CONTEXT_LENS_ADDR to another loopback port." >&2
+  exit 1
+fi
+if port_in_use "$FRONTEND_PORT"; then
+  echo "Frontend port $FRONTEND_PORT is already in use; stop the existing process or set CONTEXT_LENS_FRONTEND_PORT to another port." >&2
+  exit 1
+fi
+
 cleanup() {
   trap - EXIT INT TERM
   for pid in "$FRONTEND_PID" "$BACKEND_PID" "$MOCK_PID"; do
