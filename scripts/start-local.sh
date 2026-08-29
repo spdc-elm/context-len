@@ -7,7 +7,8 @@ RUN_DIR="${CONTEXT_LENS_RUN_DIR:-$ROOT_DIR/.context-lens-run}"
 BACKEND_ADDR="${CONTEXT_LENS_ADDR:-127.0.0.1:3001}"
 FRONTEND_HOST="${CONTEXT_LENS_FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${CONTEXT_LENS_FRONTEND_PORT:-5172}"
-OPEN_BROWSER="${CONTEXT_LENS_OPEN_BROWSER:-1}"
+OPEN_BROWSER="${CONTEXT_LENS_OPEN_BROWSER:-0}"
+KILL_EXISTING="${CONTEXT_LENS_KILL_EXISTING:-0}"
 START_MOCK="${CONTEXT_LENS_START_MOCK:-1}"
 
 MOCK_PID=""
@@ -19,15 +20,79 @@ port_in_use() {
   command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
 }
 
+# Listeners on a port (pid + command), one per line. Empty when free.
+port_listeners() {
+  local port="$1"
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN -Fpc 2>/dev/null | paste -d' ' - -
+}
+
+kill_port_listeners() {
+  local port="$1"
+  local pids
+  pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+  echo "Stopping listeners on port $port:"
+  while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    echo "  pid $pid ($(ps -p "$pid" -o command= 2>/dev/null | cut -c1-80))"
+  done <<<"$pids"
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    if ! port_in_use "$port"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Port $port still in use after SIGTERM; forcing." >&2
+  # shellcheck disable=SC2086
+  kill -9 $pids 2>/dev/null || true
+  for _ in $(seq 1 8); do
+    if ! port_in_use "$port"; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Port $port is still in use; stop it manually and retry." >&2
+  return 1
+}
+
+# Handle a busy port: kill when CONTEXT_LENS_KILL_EXISTING=1, ask when
+# interactive (the prompt preselects "yes" since rerunning the launcher is the
+# usual way to restart), fail otherwise. Never kills without consent.
+resolve_port_conflict() {
+  local port="$1"
+  local label="$2"
+  local env_hint="$3"
+  if ! port_in_use "$port"; then
+    return 0
+  fi
+  if [[ "$KILL_EXISTING" == "1" ]]; then
+    echo "$label port $port is already in use; stopping the existing process (CONTEXT_LENS_KILL_EXISTING=1)."
+    kill_port_listeners "$port"
+    return
+  fi
+  if [[ -t 0 ]]; then
+    echo "$label port $port is already in use by:"
+    port_listeners "$port" | sed 's/^/  /'
+    local answer="y"
+    read -r -p "Stop it and continue? [Y/n] " answer || true
+    if [[ "$answer" == "" || "$answer" == "y" || "$answer" == "Y" ]]; then
+      kill_port_listeners "$port"
+      return
+    fi
+    echo "Keeping the existing process. $env_hint" >&2
+    exit 1
+  fi
+  echo "$label port $port is already in use; stop the existing process, or rerun with CONTEXT_LENS_KILL_EXISTING=1. $env_hint" >&2
+  exit 1
+}
+
 backend_port="${BACKEND_ADDR##*:}"
-if port_in_use "$backend_port"; then
-  echo "Backend port $backend_port is already in use; stop the existing process or set CONTEXT_LENS_ADDR to another loopback port." >&2
-  exit 1
-fi
-if port_in_use "$FRONTEND_PORT"; then
-  echo "Frontend port $FRONTEND_PORT is already in use; stop the existing process or set CONTEXT_LENS_FRONTEND_PORT to another port." >&2
-  exit 1
-fi
+resolve_port_conflict "$backend_port" "Backend" "Set CONTEXT_LENS_ADDR to use another loopback port."
+resolve_port_conflict "$FRONTEND_PORT" "Frontend" "Set CONTEXT_LENS_FRONTEND_PORT to use another port."
 
 cleanup() {
   trap - EXIT INT TERM

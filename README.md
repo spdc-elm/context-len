@@ -20,7 +20,7 @@ cd /Users/littlefairy/projects/context-lens
 ./scripts/start-local.sh
 ```
 
-脚本会自动启动本地 mock upstream、Go gateway、workspace API 和 Vite 工作台，并在 macOS 上打开浏览器。按 `Ctrl-C` 会停止本轮启动的进程。运行日志只写入被忽略的 `.context-lens-run/` 目录。
+脚本会自动启动本地 mock upstream、Go gateway、workspace API 和 Vite 工作台（默认不再自动打开浏览器；如需要可设 `CONTEXT_LENS_OPEN_BROWSER=1`）。若端口已被占用，脚本会列出占用进程并询问是否停掉它们；非交互场景可用 `CONTEXT_LENS_KILL_EXISTING=1` 自动停掉旧进程，或回答 `n` 保持原进程继续运行。按 `Ctrl-C` 会停止本轮启动的进程。运行日志只写入被忽略的 `.context-lens-run/` 目录。
 
 首次启动会从 [`config.example.json`](config.example.json) 创建未跟踪的 `config.local.json`，并设置为仅当前用户可读。运行配置至少包含 upstream 的 `base_url` / `api_key`，也可以用可选的 `client_auth` 保护发往 context-lens `/v1/*` 的连接：
 
