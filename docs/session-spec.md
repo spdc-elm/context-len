@@ -1,6 +1,6 @@
 # Context Lens — Session 重建与观察面板 spec
 
-状态：设计已与 leader 对齐，待实现。本文是左侧面板改造、上下文占用、session 去重与合并视图的唯一设计来源。wire/协议边界以 `docs/protocol-contract.md` 为准，运行时接缝以 `docs/runtime-contract.md` 为准，Chat Template 投影规则以 `docs/chat-template-spec.md` 为准。
+状态：已实现（Phase A 面板投影、Phase B 位置链归属、Phase C 合并视图均已落地）。本文是左侧面板改造、上下文占用、session 去重与合并视图的唯一设计来源。wire/协议边界以 `docs/protocol-contract.md` 为准，运行时接缝以 `docs/runtime-contract.md` 为准，Chat Template 投影规则以 `docs/chat-template-spec.md` 为准。
 
 ## 1. 目标与非目标
 

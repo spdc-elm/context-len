@@ -9,7 +9,7 @@
 1. [`docs/protocol-contract.md`](docs/protocol-contract.md)：三协议、wire 保真、拦截状态机和观察边界
 2. [`docs/chat-template-spec.md`](docs/chat-template-spec.md)：Raw Tree、Qwen ChatML、Context IR 和 SSE 观察设计
 3. [`docs/runtime-contract.md`](docs/runtime-contract.md)：backend 与 workspace UI 的运行时接缝
-4. [`docs/session-spec.md`](docs/session-spec.md)：session 重建、fork/rollout 检测、队列面板与合并视图设计（待实现）
+4. [`docs/session-spec.md`](docs/session-spec.md)：session 重建、fork/rollout 检测、队列面板与合并视图设计（已实现）
 
 ## 本地运行
 
