@@ -40,7 +40,7 @@ describe("local workspace API", () => {
       if (url.endsWith("/command") || url.endsWith("/commands")) return Response.json({ exchange, revision: 4 });
       return new Response(new Uint8Array([0, 1, 255]), { status: 206, headers: { "content-type": "application/octet-stream", "content-range": "bytes 2-4/8", "x-artifact-complete": "false" } });
     });
-    const api = new LocalWorkspaceApi({ baseUrl: "http://127.0.0.1:8080/", fetch: fetcher });
+    const api = new LocalWorkspaceApi({ baseUrl: "http://127.0.0.1:3001/", fetch: fetcher });
     expect(await api.listExchanges()).toEqual([exchange]);
     expect(await api.getPolicy()).toEqual(exchange.policy);
     const body = await api.readArtifact({ artifact_id: "artifact", start: 2, end: 5 });
@@ -58,11 +58,11 @@ describe("local workspace API", () => {
   it("subscribes to WS events and closes after the last listener leaves", () => {
     let socket: FakeSocket | undefined;
     const api = new LocalWorkspaceApi({
-      baseUrl: "http://127.0.0.1:8080",
+      baseUrl: "http://127.0.0.1:3001",
       fetch: vi.fn(),
       reconnect: false,
       webSocketFactory: (url) => {
-        expect(url).toBe("ws://127.0.0.1:8080/api/events");
+        expect(url).toBe("ws://127.0.0.1:3001/api/events");
         socket = new FakeSocket();
         return socket;
       },

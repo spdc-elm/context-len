@@ -15,7 +15,7 @@ import (
 const (
 	// DefaultAddr is the loopback listener used when no address is configured.
 	// Keeping the default local avoids exposing a development proxy on the LAN.
-	DefaultAddr = "127.0.0.1:8080"
+	DefaultAddr = "127.0.0.1:3001"
 
 	// HealthPath is the canonical liveness endpoint.
 	HealthPath = "/healthz"

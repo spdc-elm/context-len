@@ -5,11 +5,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: "127.0.0.1",
-    port: 5173,
+    port: 5172,
     // Keep browser development same-origin while forwarding workspace calls
     // to the local Go process. Production embeds the UI on the API origin.
     proxy: {
-      "/api": { target: `${process.env.CONTEXT_LENS_BACKEND_URL ?? "http://127.0.0.1:8080"}`, ws: true },
+      "/api": { target: `${process.env.CONTEXT_LENS_BACKEND_URL ?? "http://127.0.0.1:3001"}`, ws: true },
     },
   },
   test: {

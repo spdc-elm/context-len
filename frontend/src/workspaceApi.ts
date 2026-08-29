@@ -28,7 +28,7 @@ export interface WorkspaceSocket {
 }
 
 export interface WorkspaceApiOptions {
-  /** API origin, for example `http://127.0.0.1:8080`. Defaults to location.origin. */
+  /** API origin, for example `http://127.0.0.1:3001`. Defaults to location.origin. */
   baseUrl?: string;
   /** Prefix shared by REST and realtime routes. */
   apiPrefix?: string;
@@ -90,7 +90,7 @@ function normalisePrefix(value: string): string {
 
 function locationOrigin(): string {
   if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
-  return "http://127.0.0.1:8080";
+  return "http://127.0.0.1:3001";
 }
 
 function configuredOrigin(): string {

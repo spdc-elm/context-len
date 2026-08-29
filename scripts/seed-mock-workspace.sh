@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROXY_URL="${CONTEXT_LENS_PROXY_URL:-http://127.0.0.1:8080}"
+PROXY_URL="${CONTEXT_LENS_PROXY_URL:-http://127.0.0.1:3001}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 post_fixture() {
