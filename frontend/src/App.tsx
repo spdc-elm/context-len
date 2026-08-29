@@ -12,6 +12,7 @@ import {
   workspaceReducer,
   type DetailTab,
 } from "./workspaceState";
+import { sessionLineage } from "./mergedSession";
 import { TrafficQueue } from "./components/TrafficQueue";
 import { ExchangeDetail, type CommandIntent } from "./components/ExchangeDetail";
 import { WorkspaceTopbar } from "./components/WorkspaceTopbar";
@@ -103,6 +104,7 @@ export function App({ api }: AppProps) {
   }, [runtimeApi]);
 
   const exchange = selectedExchange(state);
+  const lineage = useMemo(() => sessionLineage(state.exchanges, state.selectedExchangeId), [state.exchanges, state.selectedExchangeId]);
   const loadedCount = Object.keys(state.loadedBodies).length;
   const heldCount = useMemo(() => state.exchanges.filter((item) => item.state === "request_held" || item.state === "response_held").length, [state.exchanges]);
 
@@ -205,6 +207,7 @@ export function App({ api }: AppProps) {
         <ExchangeDetail
           exchange={exchange}
           liveStream={exchange ? state.streams[exchange.exchange_id] : undefined}
+          sessionLineage={lineage}
           activeTab={state.activeTab}
           onTabChange={(tab: DetailTab) => dispatch({ type: "set_tab", tab })}
           loadedBodies={state.loadedBodies}

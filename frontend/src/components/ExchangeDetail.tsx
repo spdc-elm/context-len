@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type {
   ArtifactRef,
   ExchangeSnapshot,
@@ -9,6 +9,8 @@ import type {
 import { formatWorkspaceTime } from "../time";
 import { parseSseRecords } from "../streamIr";
 import type { LiveStreamState } from "../streamIr";
+import { buildMergedSession, forwardedRequestArtifact, type MergedSession } from "../mergedSession";
+import { responseArtifact } from "../contracts";
 import type { DetailTab, LoadedArtifact } from "../workspaceState";
 import RawJsonTree from "./RawJsonTree";
 import ChatTemplateView from "./ChatTemplateView";
@@ -35,6 +37,8 @@ interface ExchangeDetailProps {
   exchange?: ExchangeSnapshot;
   /** Live projection of the response SSE stream while it is flowing. */
   liveStream?: LiveStreamState;
+  /** Session lineage of the selected exchange (root first) for the merged view. */
+  sessionLineage?: ExchangeSnapshot[];
   activeTab: DetailTab;
   onTabChange: (tab: DetailTab) => void;
   loadedBodies: Record<string, LoadedArtifact>;
@@ -311,6 +315,7 @@ function MutationEditor({ mode, value, onChange, onSubmit, onCancel, busy }: { m
 export function ExchangeDetail({
   exchange,
   liveStream,
+  sessionLineage,
   activeTab,
   onTabChange,
   loadedBodies,
@@ -398,6 +403,41 @@ export function ExchangeDetail({
 
   const artifact = artifactForTab(exchange, activeTab, selectedArtifactId);
   const body = bodyFor(artifact, loadedBodies);
+
+  // Merged session view: the lineage's forwarded requests and response
+  // artifacts assemble into one continuous context stream. Bodies load on
+  // demand, one at a time, through the shared artifact loader.
+  const mergedTurns = useMemo<MergedSession | undefined>(() => {
+    if (!exchange || !sessionLineage || sessionLineage.length === 0) return undefined;
+    return buildMergedSession(
+      String(exchange.protocol),
+      sessionLineage.map((turn) => {
+        const request = forwardedRequestArtifact(turn);
+        const response = responseArtifact(turn);
+        return {
+          exchange: turn,
+          requestBody: bodyFor(request, loadedBodies),
+          responseIsSse: response?.content_type.includes("event-stream") ?? false,
+          responseBody: bodyFor(response, loadedBodies),
+        };
+      }),
+      liveStream,
+      exchange.exchange_id,
+    );
+  }, [exchange, sessionLineage, loadedBodies, liveStream]);
+
+  useEffect(() => {
+    if (!sessionLineage || sessionLineage.length === 0 || activeTab !== "chat_template") return;
+    if (bodyLoading) return;
+    for (const turn of sessionLineage) {
+      for (const ref of [forwardedRequestArtifact(turn), responseArtifact(turn)]) {
+        if (ref && !loadedBodies[ref.artifact_id]) {
+          onLoadBody(ref);
+          return;
+        }
+      }
+    }
+  }, [activeTab, bodyLoading, loadedBodies, onLoadBody, sessionLineage]);
 
   useEffect(() => {
     if (artifact && !loadedBodies[artifact.artifact_id] && !bodyLoading) onLoadBody(artifact);
@@ -506,7 +546,7 @@ export function ExchangeDetail({
         <div className={`viewer-body ${split ? "split-mode" : ""}`} data-split-view={split ? "true" : undefined} ref={splitBodyRef}>
           {split ? (<>
             <div className="viewer-pane pane-left" style={{ flexBasis: `${Math.round(paneRatio * 100)}%` }}>
-              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} />
+              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} turns={mergedTurns} selectedExchangeId={exchange.exchange_id} />
             </div>
             <div className="pane-divider" role="separator" aria-orientation="vertical" aria-label="Resize panes" title="Drag to resize" onMouseDown={startPaneResize} />
             <div className="viewer-pane pane-right">
@@ -514,7 +554,7 @@ export function ExchangeDetail({
             </div>
           </>) : (<>
             {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
-            {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} />}
+            {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} turns={mergedTurns} selectedExchangeId={exchange.exchange_id} />}
             {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} live={liveStream} />}
           </>)}
         </div>

@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ArtifactRef } from "../contracts";
-import { normalizeContext, type ContextBlock } from "../contextIr";
+import { normalizeContext, type ContextBlock, type ContextDocument } from "../contextIr";
+import type { MergedSession, MergedTurn } from "../mergedSession";
+import { formatTokens } from "../format";
 import {
   QWEN_CHAT_TEMPLATE_NAME,
   QWEN_DEFAULT_SYSTEM,
@@ -19,6 +21,9 @@ interface ChatTemplateViewProps {
   artifact?: ArtifactRef;
   /** Live response stream while the SSE body is still flowing. */
   live?: LiveStreamState;
+  /** Merged session lineage; when present the session scope renders it. */
+  turns?: MergedSession;
+  selectedExchangeId?: string;
 }
 
 type Segment =
@@ -422,8 +427,38 @@ function streamChip(status: StreamStatus, detail: string | undefined, eventCount
   );
 }
 
-export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplateViewProps) {
+function namespaceBlocks(blocks: ContextBlock[], namespace: string): ContextBlock[] {
+  return blocks.map((block) => ({ ...block, id: `${namespace}:${block.id}` }));
+}
+
+function documentForBlocks(protocol: string, blocks: ContextBlock[]): ContextDocument {
+  return { protocol, blocks, source: undefined, sourceText: "", providerExtensions: {}, passthrough: [], warnings: [] };
+}
+
+function TurnBoundary({ turn, isLast, streaming }: { turn: MergedTurn; isLast: boolean; streaming: boolean }) {
+  const model = turn.exchange.summary?.model;
+  const tokens = turn.exchange.summary?.context_tokens;
+  return (
+    <div className={`chat-turn-boundary${isLast ? " chat-turn-latest" : ""}`} data-turn-depth={turn.depth}>
+      <span className="chat-turn-badge">T{turn.depth}</span>
+      {model ? <span className="chat-turn-model">{model}</span> : null}
+      <span className="chat-turn-ctx">{formatTokens(tokens)} ctx</span>
+      {turn.markers.map((marker) => (
+        <span className="chat-turn-marker" key={marker}>{marker}</span>
+      ))}
+      {streaming ? (
+        <span className="chat-live-chip chat-live-streaming">
+          <i className="chat-live-dot" aria-hidden="true" />
+          response · streaming
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+export function ChatTemplateView({ protocol, body, artifact, live, turns }: ChatTemplateViewProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [scope, setScope] = useState<"session" | "request">("session");
   const viewRef = useRef<HTMLElement | null>(null);
   const scrollParentRef = useRef<HTMLElement | null>(null);
   const followLatestRef = useRef(true);
@@ -439,7 +474,29 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
     [isSse, body, protocol],
   );
   const activeStream = streamFromBody ?? live;
+  const useSessionScope = scope === "session" && (turns?.turns.length ?? 0) > 0;
+
+  const sessionSegments = useMemo(() => {
+    if (!useSessionScope || !turns) return [];
+    const out: Segment[][] = [];
+    turns.turns.forEach((turn, index) => {
+      const namespace = `t${index}`;
+      const contextBlocks = turn.contextDocument
+        ? turn.contextDocument.blocks.map((block) => ({ ...block, id: `${namespace}:${block.id}` }))
+        : namespaceBlocks(turn.contextBlocks, namespace);
+      const rendered: RenderedContextBlock[] = [];
+      rendered.push(...renderQwenBlocks(documentForBlocks(protocol, contextBlocks)));
+      const responseBlocks = turn.responseStream
+        ? turn.responseStream.blocks
+        : turn.responseBlocks;
+      rendered.push(...renderQwenBlocks(documentForBlocks(protocol, namespaceBlocks(responseBlocks, namespace))));
+      out.push(rendered.map(({ block }, blockIndex) => blockToSegment(block, blockIndex)));
+    });
+    return out;
+  }, [useSessionScope, turns, protocol]);
+
   const blocks = useMemo<RenderedContextBlock[]>(() => {
+    if (useSessionScope) return [];
     if (streamFromBody) {
       return renderQwenBlocks({ ...document, blocks: streamFromBody.blocks });
     }
@@ -448,7 +505,7 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
     // The live response appends to the request context: the operator watches
     // the assistant's reply grow at the end of the context the model saw.
     return [...base, ...live.blocks.map((block) => ({ block, text: renderQwenBlock(block) }))];
-  }, [document, live, streamFromBody]);
+  }, [document, live, streamFromBody, useSessionScope]);
   const segments = useMemo(() => blocks.map(({ block }, index) => blockToSegment(block, index)), [blocks]);
 
   useLayoutEffect(() => {
@@ -456,7 +513,9 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
     // Switching artifacts starts a fresh reading session. The next layout
     // pass will place the Chat Template at the end of that artifact.
     followLatestRef.current = true;
-  }, [body]);
+  }, [body, useSessionScope ? turns?.turns.length : 0]);
+
+  const lastStream = useSessionScope && turns ? turns.turns[turns.turns.length - 1].responseStream : undefined;
 
   useEffect(() => {
     const container = findScrollParent(viewRef.current);
@@ -471,7 +530,7 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
     };
     container.addEventListener("scroll", onScroll, { passive: true });
     return () => container.removeEventListener("scroll", onScroll);
-  }, [body, isSse]);
+  }, [body, isSse, useSessionScope]);
 
   useLayoutEffect(() => {
     const container = scrollParentRef.current ?? findScrollParent(viewRef.current);
@@ -482,9 +541,9 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
     // notification queued by the browser so the initial pin is not interpreted
     // as a user's manual scroll.
     queueMicrotask(() => { autoScrollingRef.current = false; });
-  }, [body, isSse, live?.eventCount, streamFromBody?.eventCount, segments.length]);
+  }, [body, isSse, live?.eventCount, streamFromBody?.eventCount, segments.length, sessionSegments.length, lastStream?.eventCount]);
 
-  if (body === undefined) {
+  if (body === undefined && !useSessionScope) {
     return (
       <div className="body-placeholder">Load an artifact to render the derived Qwen ChatML context.</div>
     );
@@ -493,7 +552,8 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
   const toggle = (id: string, defaultOpen: boolean) =>
     setCollapsed((current) => ({ ...current, [id]: !(current[id] ?? defaultOpen) }));
 
-  const streaming = activeStream?.status === "streaming";
+  const streaming = activeStream?.status === "streaming" || lastStream?.status === "streaming";
+  const turnCount = turns?.turns.length ?? 0;
 
   return (
     <section
@@ -505,13 +565,34 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
     >
       <div className="chat-template-heading">
         <strong>{QWEN_CHAT_TEMPLATE_NAME}</strong>
-        {activeStream && activeStream.eventCount > 0 ? (
+        {turns && turnCount > 0 ? (
+          <div className="chat-scope-toggle" role="group" aria-label="Chat template scope">
+            <button
+              type="button"
+              className={`chat-scope-button ${useSessionScope ? "active" : ""}`}
+              aria-pressed={useSessionScope}
+              onClick={() => setScope("session")}
+            >
+              Session · {turnCount} {turnCount === 1 ? "turn" : "turns"}
+            </button>
+            <button
+              type="button"
+              className={`chat-scope-button ${!useSessionScope ? "active" : ""}`}
+              aria-pressed={!useSessionScope}
+              onClick={() => setScope("request")}
+            >
+              Request
+            </button>
+          </div>
+        ) : null}
+        {!useSessionScope && activeStream && activeStream.eventCount > 0 ? (
           streamChip(activeStream.status, activeStream.statusDetail, activeStream.eventCount)
         ) : (
-          <span>{document.blocks.length} blocks</span>
+          !useSessionScope ? <span>{document.blocks.length} blocks</span> : null
         )}
+        {useSessionScope ? <span className="chat-session-meta">session lineage</span> : null}
       </div>
-      {document.warnings.length > 0 && !isSse && (
+      {document.warnings.length > 0 && !isSse && !useSessionScope && (
         <div className="warning-box">
           {document.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
@@ -519,7 +600,18 @@ export function ChatTemplateView({ protocol, body, artifact, live }: ChatTemplat
         </div>
       )}
       <div className="chat-template-stream">
-        <SegmentList segments={segments} depth={-1} collapsed={collapsed} onToggle={toggle} />
+        {useSessionScope && turns ? (
+          <>
+            {turns.turns.map((turn, index) => (
+              <div className="chat-turn" key={turn.exchange.exchange_id}>
+                <TurnBoundary turn={turn} isLast={index === turnCount - 1} streaming={index === turnCount - 1 && turn.responseStream?.status === "streaming"} />
+                <SegmentList segments={sessionSegments[index] ?? []} depth={-1} collapsed={collapsed} onToggle={toggle} />
+              </div>
+            ))}
+          </>
+        ) : (
+          <SegmentList segments={segments} depth={-1} collapsed={collapsed} onToggle={toggle} />
+        )}
       </div>
     </section>
   );
