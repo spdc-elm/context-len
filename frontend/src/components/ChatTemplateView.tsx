@@ -488,6 +488,7 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
   // unrecognized provider events, kept available behind an explicit toggle
   // instead of drowning the conversation. The choice is display-only.
   const [showUnknown, setShowUnknown] = useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(false);
   const viewRef = useRef<HTMLElement | null>(null);
   const scrollParentRef = useRef<HTMLElement | null>(null);
   const followLatestRef = useRef(true);
@@ -509,6 +510,7 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
   // exchanges starts a fresh reading session with the same default.
   useEffect(() => {
     setShowUnknown(false);
+    setToolbarCollapsed(false);
   }, [selectedExchangeId]);
 
   const sessionSegments = useMemo(() => {
@@ -639,54 +641,66 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
       data-chat-template="qwen-chatml"
       data-live={streaming ? "true" : undefined}
     >
-      <div className="chat-template-heading">
+      <div className={`chat-template-heading${toolbarCollapsed ? " chat-template-heading-collapsed" : ""}`} role="toolbar" aria-label="Chat Template toolbar">
         <strong>{QWEN_CHAT_TEMPLATE_NAME}</strong>
-        {turns && turnCount > 0 ? (
-          <div className="chat-scope-toggle" role="group" aria-label="Chat template scope">
+        {!toolbarCollapsed && <>
+          {turns && turnCount > 0 ? (
+            <div className="chat-scope-toggle" role="group" aria-label="Chat template scope">
+              <button
+                type="button"
+                className={`chat-scope-button ${useSessionScope ? "active" : ""}`}
+                aria-pressed={useSessionScope}
+                onClick={() => setScope("session")}
+              >
+                Session · {turnCount} {turnCount === 1 ? "turn" : "turns"}
+              </button>
+              <button
+                type="button"
+                className={`chat-scope-button ${!useSessionScope ? "active" : ""}`}
+                aria-pressed={!useSessionScope}
+                onClick={() => setScope("request")}
+              >
+                Request
+              </button>
+            </div>
+          ) : null}
+          {!useSessionScope && activeStream && activeStream.eventCount > 0 ? (
+            streamChip(activeStream.status, activeStream.statusDetail, activeStream.eventCount)
+          ) : (
+            !useSessionScope ? <span>{visibleBlocks.length} blocks</span> : null
+          )}
+          {useSessionScope ? <span className="chat-session-meta">session lineage</span> : null}
+          {unknownCount > 0 ? (
             <button
               type="button"
-              className={`chat-scope-button ${useSessionScope ? "active" : ""}`}
-              aria-pressed={useSessionScope}
-              onClick={() => setScope("session")}
+              className={`chat-unknown-toggle ${showUnknown ? "active" : ""}`}
+              aria-pressed={showUnknown}
+              onClick={() => setShowUnknown((current) => !current)}
             >
-              Session · {turnCount} {turnCount === 1 ? "turn" : "turns"}
+              {showUnknown ? "Hide" : "Show"} unknown ({unknownCount})
             </button>
+          ) : null}
+          {outerSegments.length > 0 ? (
             <button
               type="button"
-              className={`chat-scope-button ${!useSessionScope ? "active" : ""}`}
-              aria-pressed={!useSessionScope}
-              onClick={() => setScope("request")}
+              className="chat-fold-toggle"
+              aria-label={allOuterClosed ? "Expand all ChatML blocks" : "Collapse all ChatML blocks"}
+              onClick={toggleAll}
             >
-              Request
+              {allOuterClosed ? "Expand all" : "Collapse all"}
             </button>
-          </div>
-        ) : null}
-        {!useSessionScope && activeStream && activeStream.eventCount > 0 ? (
-          streamChip(activeStream.status, activeStream.statusDetail, activeStream.eventCount)
-        ) : (
-          !useSessionScope ? <span>{visibleBlocks.length} blocks</span> : null
-        )}
-        {useSessionScope ? <span className="chat-session-meta">session lineage</span> : null}
-        {unknownCount > 0 ? (
-          <button
-            type="button"
-            className={`chat-unknown-toggle ${showUnknown ? "active" : ""}`}
-            aria-pressed={showUnknown}
-            onClick={() => setShowUnknown((current) => !current)}
-          >
-            {showUnknown ? "Hide" : "Show"} unknown ({unknownCount})
-          </button>
-        ) : null}
-        {outerSegments.length > 0 ? (
-          <button
-            type="button"
-            className="chat-fold-toggle"
-            aria-label={allOuterClosed ? "Expand all ChatML blocks" : "Collapse all ChatML blocks"}
-            onClick={toggleAll}
-          >
-            {allOuterClosed ? "Expand all" : "Collapse all"}
-          </button>
-        ) : null}
+          ) : null}
+        </>}
+        <button
+          type="button"
+          className="chat-toolbar-toggle"
+          aria-expanded={!toolbarCollapsed}
+          aria-label={toolbarCollapsed ? "Expand Chat Template toolbar" : "Collapse Chat Template toolbar"}
+          title={toolbarCollapsed ? "Expand toolbar" : "Collapse toolbar"}
+          onClick={() => setToolbarCollapsed((current) => !current)}
+        >
+          {toolbarCollapsed ? "Expand" : "Collapse"}
+        </button>
       </div>
       {document.warnings.length > 0 && !isSse && !useSessionScope && (
         <div className="warning-box">

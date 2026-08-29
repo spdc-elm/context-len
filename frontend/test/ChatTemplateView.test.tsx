@@ -96,6 +96,24 @@ describe("ChatTemplateView", () => {
     expect(rendered.textContent).toContain("<|im_start|>user");
   });
 
+  it("keeps a collapsible toolbar available for long Chat Template streams", () => {
+    const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
+    const toolbar = rendered.querySelector('[role="toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.classList.contains("chat-template-heading")).toBe(true);
+    const toggle = rendered.querySelector(".chat-toolbar-toggle");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(rendered.querySelector(".chat-fold-toggle")).not.toBeNull();
+    click(toggle);
+    expect(toolbar?.classList.contains("chat-template-heading-collapsed")).toBe(true);
+    expect(rendered.querySelector(".chat-toolbar-toggle")?.getAttribute("aria-expanded")).toBe("false");
+    expect(rendered.querySelector(".chat-fold-toggle")).toBeNull();
+    click(rendered.querySelector(".chat-toolbar-toggle"));
+    expect(toolbar?.classList.contains("chat-template-heading-collapsed")).toBe(false);
+    expect(rendered.querySelector(".chat-toolbar-toggle")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+
   it("provides one-click outer collapse and expand controls", () => {
     const rendered = renderView({ protocol: "chat_completions", body: chatRequest });
     const fold = rendered.querySelector(".chat-fold-toggle");

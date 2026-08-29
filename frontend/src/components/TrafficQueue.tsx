@@ -309,6 +309,7 @@ function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }:
   onSelect: (exchangeId: string, followSessionId?: string) => void;
 }) {
   const stats = statsLine(group.latest.summary);
+  const selectedInGroup = group.members.some((exchange) => exchange.exchange_id === selectedExchangeId);
   const turnBadges = [
     group.forkCount > 0 ? `${group.forkCount} fork${group.forkCount > 1 ? "s" : ""}` : "",
     group.rolloutCount > 0 ? `×${group.rolloutCount + 1}` : "",
@@ -319,8 +320,8 @@ function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }:
       <button
         type="button"
         role="option"
-        aria-selected={group.latest.exchange_id === selectedExchangeId}
-        className={`traffic-row ${group.latest.exchange_id === selectedExchangeId ? "selected" : ""}`}
+        aria-selected={selectedInGroup}
+        className={`traffic-row ${selectedInGroup ? "selected" : ""}`}
         onClick={() => onSelect(group.latest.exchange_id, group.sessionId)}
       >
         <div className="traffic-row-top">
