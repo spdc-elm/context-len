@@ -645,3 +645,29 @@ body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
 @container empty-workspace (max-width: 560px) {
   .empty-detail-aside { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Complete the light-theme status matrix. These are visual tokens shared by
+   queue pills, the detail header and the inline warning surfaces. */
+.theme-light .state-failed,
+.theme-light .state-dropped,
+.theme-light .state-cancelled {
+  border-color: #e2a1ad;
+  color: #a51d39;
+  background: #fff1f3;
+}
+.theme-light .state-upstream_running {
+  border-color: #9fc5e7;
+  color: #1d5f97;
+  background: #edf7ff;
+}
+.theme-light .error-banner {
+  border-bottom-color: #e2a1ad;
+  color: #a51d39;
+  background: #fff1f3;
+}
+.theme-light .error-banner button { color: #a51d39; }
+.theme-light .warning-box {
+  border-left-color: #d4ad5e;
+  color: #805400;
+  background: #fff8e1;
+}
