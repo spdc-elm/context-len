@@ -92,20 +92,20 @@ anthropic 的上下文占用 = `input_tokens + cache_read_input_tokens + cache_c
 
 ```text
 H_1 = SHA-256("ctxlens-pos/v1" ‖ protocol ‖ digest(msg_1))
-H_m = SHA-256(H_{m-1} ‖ digest(msg_m))
+H_m = SHA-256("ctxlens-pos/v1" ‖ "chain" ‖ H_{m-1} ‖ digest(msg_m))
 ```
 
-每个请求走完自己的 H_1..H_m，全部注册进全局位置表（同 protocol 才可能命中）。内存开销按唯一上下文增长：append-only 请求只新分配超出已匹配深度的位置。
+位置表只注册请求的 tip（完整上下文 H_m），不注册中间前缀。这是推导后的设计决策：append-only 会话的下一轮总是延伸上一轮的 tip，同前缀不同后缀的分叉同样以 tip 为分叉点；而以中间前缀为父会把 fork 归到错误的轮次深度。tip-to-tip 边同时是匹配、轮次深度和 fork 归属的正确依据，且内存开销降为每轮一个位置。
 
-归属判定（k = 请求位置中已存在于位置表的最深位置）：
+归属判定（k = 请求链中已存在于位置表的最深 tip）：
 
 | 情形 | 判定 |
 |---|---|
-| k == m，且该位置已有 exchange | rollout/repeat 兄弟（完全相同的上下文再次发送，如并行采样、重试）；节点 repeat 计数 +1 |
-| k < m | 正常续轮；若 H_k 已有其它后继，则 H_k 标记 fork，新分支挂在其下 |
-| k == 0（无任何位置命中） | 新 session 根，分配新 session_id |
+| k == m | 该完整上下文已是注册 tip：rollout/repeat 兄弟（完全相同的上下文再次发送，如并行采样、重试）；repeat 计数 +1 |
+| 0 ≤ k < m | 正常续轮；若父 tip 已有其它后继，则标记 fork，新分支挂在其下 |
+| k 无命中 | 新 session 根，分配新 session_id |
 
-fork 语义：同前缀、不同后缀的两次续轮在同一 session 树上形成两条分支，分支点打 fork 标记。rollout 语义：同一轮位置上并列多个 exchange（相同上下文的多次采样）。
+fork 语义：同一父 tip 的不同后继在同一 session 树上形成两条分支，后到的分支点打 fork 标记。rollout 语义：同一轮位置上并列多个 exchange（相同上下文的多次采样）。在 tip 表中无法定位的非 tip 分叉点（例如首个请求内部的改写）保守地成为新 session，不误合。
 
 ### 4.3 计算位置与数据来源
 
@@ -135,8 +135,8 @@ fork 语义：同前缀、不同后缀的两次续轮在同一 session 树上形
 
 - `exchange.Snapshot` 增加 additive `session` 对象：`session_id`、`position`（H_m hex）、`parent_position`、`depth`、`repeat_index`、fork 起点 depth（非 fork 省略）。
 - `exchange.Snapshot` 增加 additive `summary` 对象：`model`、`message_count`、`preview`、`tool_names`、`context_tokens`（response 完成时回填）。
-- 新增 `GET /api/sessions`：返回 session 聚合（树、preview、model/models、最新 message_count 与 ctx、exchange/fork/rollout 计数、派生 state、时间范围），供面板初渲染；后续更新走现有 events 流上的 additive 字段。
-- workspace HTTP/SSE 层不改语义，仅透传新增字段。
+- `exchange.Snapshot` 增加 additive `session` 对象：`session_id`、`depth`、`position`、`parent_position`、`parent_exchange_id`、`repeat_index`、`fork`、`model_changed`、`tools_changed`、`root`。
+- 面板的 session 分组是前端纯推导：从快照的 session 字段构建树（parent_exchange_id 连边，同 position 为 rollout 组），事件流更新快照时即时重算，不新增后端聚合端点（避免两处树逻辑漂移）。workspace HTTP/SSE 层不改语义，仅透传新增字段。
 
 ## 6. 合并 Session 视图（Phase C）
 
@@ -176,7 +176,7 @@ req₁ 的初始上下文（inbound messages）
 ## 8. 分期与验收
 
 - Phase A（面板）：summary 投影（preview/model/message_count/ctx）+ 队列字段改造 + 筛选 + URL 移除。验收：三协议 fixture 行显示 preview/model/ctx；筛选生效；转发路径字节零变化；测试覆盖 summary 投影与 usage 提取（含 anthropic cache 求和）。
-- Phase B（归属）：位置链索引 + fork/rollout 检测 + additive 字段 + `GET /api/sessions` + 面板 session 分组。验收：fixture 驱动的 fork/rollout/新根用例；`-race`；现有 snapshot 字段无删改。
+- Phase B（归属）：tip 位置链索引 + fork/rollout 检测 + additive 字段 + 前端 session 分组（纯推导，无新端点）。验收：fixture 驱动的 fork/rollout/新根用例；`-race`；现有 snapshot 字段无删改。
 - Phase C（合并视图）：连续上下文流 + echo 消除 + boundary 标记 + live 尾部。验收：tool call → tool result → 下一轮回复在同一流中呈现；echo 不匹配时双显不静默；live 流式与终态一致。
 
 ## 9. 已拍板决策

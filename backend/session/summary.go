@@ -68,25 +68,6 @@ func IsChatProtocol(protocol inspection.Protocol) bool {
 	}
 }
 
-// SummarizeRequest computes the request-side summary fields from the original
-// inbound request body bytes. It never fails: an unparseable or non-chat body
-// yields an empty Summary the caller may drop.
-func SummarizeRequest(protocol inspection.Protocol, body []byte) Summary {
-	summary := Summary{}
-	if !IsChatProtocol(protocol) {
-		return summary
-	}
-	root := inspection.InspectJSON(body).Root
-	if root == nil || root.Kind != inspection.JSONObject {
-		return summary
-	}
-	summary.Model = stringField(root, "model")
-	summary.MessageCount = messageSequenceLength(protocol, root)
-	summary.ToolNames = toolNames(protocol, root)
-	summary.Preview = requestPreview(protocol, root, summary.Model, summary.MessageCount)
-	return summary
-}
-
 // ExtractContextTokens reads the upstream-reported input-token count from a
 // response body. It accepts JSON and SSE bodies and returns nil whenever no
 // usage was reported (for example a Chat Completions stream that was sent

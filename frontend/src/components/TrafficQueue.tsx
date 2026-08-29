@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { ExchangeSnapshot } from "../contracts";
+import { groupSessions, sessionMatchesFilters, unplacedExchanges, type SessionGroup } from "../sessionTree";
 import { formatWorkspaceTime } from "../time";
 
 interface TrafficQueueProps {
@@ -9,6 +10,8 @@ interface TrafficQueueProps {
   onToggle?: () => void;
   onSelect: (exchangeId: string) => void;
 }
+
+type QueueView = "sessions" | "exchanges";
 
 const CHAT_PROTOCOLS = new Set(["responses", "chat_completions", "anthropic_messages"]);
 
@@ -41,16 +44,12 @@ function formatTokens(tokens: number | undefined): string {
   return `${(tokens / 1_000_000).toFixed(1)}M`;
 }
 
-function rowStatsLine(summary: ExchangeSnapshot["summary"]): string {
+function statsLine(summary: ExchangeSnapshot["summary"]): string {
   const parts: string[] = [];
   if (summary?.model) parts.push(summary.model);
   if (summary?.message_count) parts.push(`${summary.message_count} msgs`);
   parts.push(`${formatTokens(summary?.context_tokens)} ctx`);
   return parts.join(" · ");
-}
-
-function rowPreview(summary: ExchangeSnapshot["summary"]): string | undefined {
-  return summary?.preview;
 }
 
 interface FilterState {
@@ -83,6 +82,9 @@ function uniqueOption(values: string[]): string[] {
 
 export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false, onToggle, onSelect }: TrafficQueueProps) {
   const [filters, setFilters] = useState<FilterState>(NO_FILTERS);
+  const [view, setView] = useState<QueueView>("sessions");
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+  const [otherTrafficOpen, setOtherTrafficOpen] = useState(false);
 
   const orderedExchanges = useMemo(() => [...exchanges].sort((left, right) => {
     const rightTime = Date.parse(right.updated_at);
@@ -90,6 +92,10 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
     if (rightTime !== leftTime) return rightTime - leftTime;
     return right.exchange_id.localeCompare(left.exchange_id);
   }), [exchanges]);
+
+  const placedExchanges = useMemo(() => exchanges, [exchanges]);
+  const sessions = useMemo(() => groupSessions(placedExchanges), [placedExchanges]);
+  const otherTraffic = useMemo(() => unplacedExchanges(orderedExchanges), [orderedExchanges]);
 
   const protocolOptions = useMemo(() => uniqueOption(exchanges.map((exchange) => exchange.protocol)), [exchanges]);
   const stateOptions = useMemo(() => uniqueOption(exchanges.map((exchange) => exchange.state)), [exchanges]);
@@ -99,9 +105,29 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
     () => orderedExchanges.filter((exchange) => matchesFilters(exchange, filters)),
     [orderedExchanges, filters],
   );
+  const filteredSessions = useMemo(
+    () => sessions.filter((group) => sessionMatchesFilters(group, filters.text, filters.protocol, filters.state, filters.model)),
+    [sessions, filters],
+  );
+  const filteredOther = useMemo(
+    () => otherTraffic.filter((exchange) => matchesFilters(exchange, filters)),
+    [otherTraffic, filters],
+  );
 
   const filtersActive =
     filters.text.trim() !== "" || filters.protocol !== "all" || filters.state !== "all" || filters.model !== "all";
+  const listEmpty = view === "sessions"
+    ? filteredSessions.length === 0 && filteredOther.length === 0
+    : filteredExchanges.length === 0;
+
+  const toggleSession = (sessionId: string) => {
+    setExpandedSessions((current) => {
+      const next = new Set(current);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  };
 
   return (
     <aside className={`traffic-panel ${collapsed ? "collapsed" : ""}`} aria-label="Traffic queue">
@@ -115,6 +141,24 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
       {!collapsed && <>
         <p className="panel-note">Live local workspace · events in realtime; bodies load on demand</p>
         <div className="traffic-filters" role="search" aria-label="Exchange filters">
+          <div className="traffic-view-toggle" role="group" aria-label="Queue view">
+            <button
+              type="button"
+              className={`view-toggle-button ${view === "sessions" ? "active" : ""}`}
+              aria-pressed={view === "sessions"}
+              onClick={() => setView("sessions")}
+            >
+              Sessions
+            </button>
+            <button
+              type="button"
+              className={`view-toggle-button ${view === "exchanges" ? "active" : ""}`}
+              aria-pressed={view === "exchanges"}
+              onClick={() => setView("exchanges")}
+            >
+              Exchanges
+            </button>
+          </div>
           <input
             className="traffic-filter-input"
             type="search"
@@ -161,7 +205,7 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
           </div>
         </div>
       <div className="traffic-list" role="listbox" aria-label="Exchanges">
-        {filteredExchanges.length === 0 ? (
+        {listEmpty ? (
           <div className="empty-state">
             {exchanges.length === 0
               ? "Waiting for an exchange…"
@@ -169,40 +213,197 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
                 ? "No exchanges match the current filters."
                 : "Waiting for an exchange…"}
           </div>
-        ) : filteredExchanges.map((exchange) => {
-          const chat = isChatProtocol(exchange.protocol);
-          const preview = rowPreview(exchange.summary);
-          const stats = rowStatsLine(exchange.summary);
-          return (
-            <button
-              type="button"
-              role="option"
-              aria-selected={exchange.exchange_id === selectedExchangeId}
-              className={`traffic-row ${exchange.exchange_id === selectedExchangeId ? "selected" : ""}`}
+        ) : view === "sessions" ? (
+          <>
+            {filteredSessions.map((group) => (
+              <SessionRow
+                key={group.sessionId}
+                group={group}
+                expanded={expandedSessions.has(group.sessionId)}
+                selectedExchangeId={selectedExchangeId}
+                onToggle={() => toggleSession(group.sessionId)}
+                onSelect={onSelect}
+              />
+            ))}
+            {filteredOther.length > 0 && (
+              <div className="traffic-other">
+                <button
+                  type="button"
+                  className="traffic-other-header"
+                  aria-expanded={otherTrafficOpen}
+                  onClick={() => setOtherTrafficOpen((open) => !open)}
+                >
+                  <span className={`traffic-other-chevron ${otherTrafficOpen ? "open" : ""}`} aria-hidden="true">›</span>
+                  Other traffic · {filteredOther.length}
+                </button>
+                {otherTrafficOpen && filteredOther.map((exchange) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={exchange.exchange_id === selectedExchangeId}
+                    className={`traffic-row traffic-row-nested ${exchange.exchange_id === selectedExchangeId ? "selected" : ""}`}
+                    key={exchange.exchange_id}
+                    onClick={() => onSelect(exchange.exchange_id)}
+                  >
+                    <div className="traffic-row-top">
+                      <span className={`protocol-dot protocol-${exchange.protocol}`} aria-hidden="true" />
+                      <strong>{exchange.request.envelope.method}</strong>
+                      <span className={`state-pill state-${exchange.state}`}>{stateLabel(exchange.state)}</span>
+                    </div>
+                    <div className="traffic-row-path">{`${exchange.request.envelope.method} ${exchange.request.envelope.path}${exchange.request.envelope.raw_query ? `?${exchange.request.envelope.raw_query}` : ""}`}</div>
+                    <div className="traffic-row-meta">
+                      <span>{formatWorkspaceTime(exchange.updated_at)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          filteredExchanges.map((exchange) => (
+            <ExchangeRow
               key={exchange.exchange_id}
-              onClick={() => onSelect(exchange.exchange_id)}
-            >
-              <div className="traffic-row-top">
-                <span className={`protocol-dot protocol-${exchange.protocol}`} aria-hidden="true" />
-                <strong>{chat ? protocolLabel(exchange.protocol) : exchange.request.envelope.method}</strong>
-                <span className={`state-pill state-${exchange.state}`}>{stateLabel(exchange.state)}</span>
-              </div>
-              {chat ? (
-                <>
-                  <div className="traffic-row-stats">{stats}</div>
-                  {preview ? <div className="traffic-row-preview">{preview}</div> : null}
-                </>
-              ) : (
-                <div className="traffic-row-path">{`${exchange.request.envelope.method} ${exchange.request.envelope.path}${exchange.request.envelope.raw_query ? `?${exchange.request.envelope.raw_query}` : ""}`}</div>
-              )}
-              <div className="traffic-row-meta">
-                <span>{exchange.summary?.tool_names?.length ? `${exchange.summary.tool_names.length} tools` : ""}</span>
-                <span>{formatWorkspaceTime(exchange.updated_at)}</span>
-              </div>
-            </button>
-          );
-        })}
+              exchange={exchange}
+              selected={exchange.exchange_id === selectedExchangeId}
+              onSelect={onSelect}
+            />
+          ))
+        )}
       </div></>}
     </aside>
+  );
+}
+
+function ExchangeRow({ exchange, selected, onSelect }: {
+  exchange: ExchangeSnapshot;
+  selected: boolean;
+  onSelect: (exchangeId: string) => void;
+}) {
+  const chat = isChatProtocol(exchange.protocol);
+  const preview = exchange.summary?.preview;
+  const stats = statsLine(exchange.summary);
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      className={`traffic-row ${selected ? "selected" : ""}`}
+      onClick={() => onSelect(exchange.exchange_id)}
+    >
+      <div className="traffic-row-top">
+        <span className={`protocol-dot protocol-${exchange.protocol}`} aria-hidden="true" />
+        <strong>{chat ? protocolLabel(exchange.protocol) : exchange.request.envelope.method}</strong>
+        <span className={`state-pill state-${exchange.state}`}>{stateLabel(exchange.state)}</span>
+      </div>
+      {chat ? (
+        <>
+          <div className="traffic-row-stats">{stats}</div>
+          {preview ? <div className="traffic-row-preview">{preview}</div> : null}
+        </>
+      ) : (
+        <div className="traffic-row-path">{`${exchange.request.envelope.method} ${exchange.request.envelope.path}${exchange.request.envelope.raw_query ? `?${exchange.request.envelope.raw_query}` : ""}`}</div>
+      )}
+      <div className="traffic-row-meta">
+        <span>{exchange.summary?.tool_names?.length ? `${exchange.summary.tool_names.length} tools` : ""}</span>
+        <span>{formatWorkspaceTime(exchange.updated_at)}</span>
+      </div>
+    </button>
+  );
+}
+
+function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }: {
+  group: SessionGroup;
+  expanded: boolean;
+  selectedExchangeId?: string;
+  onToggle: () => void;
+  onSelect: (exchangeId: string) => void;
+}) {
+  const stats = statsLine(group.latest.summary);
+  const turnBadges = [
+    group.forkCount > 0 ? `${group.forkCount} fork${group.forkCount > 1 ? "s" : ""}` : "",
+    group.rolloutCount > 0 ? `×${group.rolloutCount + 1}` : "",
+    group.models.length > 1 ? `+${group.models.length - 1} model` : "",
+  ].filter(Boolean).join(" · ");
+  return (
+    <div className="traffic-session">
+      <button
+        type="button"
+        role="option"
+        aria-selected={group.latest.exchange_id === selectedExchangeId}
+        className={`traffic-row ${group.latest.exchange_id === selectedExchangeId ? "selected" : ""}`}
+        onClick={() => onSelect(group.latest.exchange_id)}
+      >
+        <div className="traffic-row-top">
+          <span className={`protocol-dot protocol-${group.protocol}`} aria-hidden="true" />
+          <strong>{protocolLabel(group.protocol)}</strong>
+          <span className={`state-pill state-${group.state}`}>{stateLabel(group.state)}</span>
+          <span
+            className={`traffic-session-chevron ${expanded ? "open" : ""}`}
+            role="button"
+            aria-label={expanded ? "Collapse session turns" : "Expand session turns"}
+            aria-expanded={expanded}
+            tabIndex={0}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.stopPropagation();
+                event.preventDefault();
+                onToggle();
+              }
+            }}
+          >›</span>
+        </div>
+        <div className="traffic-row-stats">{stats}</div>
+        {group.preview ? <div className="traffic-row-preview">{group.preview}</div> : null}
+        <div className="traffic-row-meta">
+          <span>{[`${group.turnCount} turn${group.turnCount > 1 ? "s" : ""}`, turnBadges].filter(Boolean).join(" · ")}</span>
+          <span>{formatWorkspaceTime(group.updatedAt)}</span>
+        </div>
+      </button>
+      {expanded && (
+        <div className="traffic-session-members" role="group" aria-label="Session turns">
+          {group.members.map((exchange) => (
+            <MemberRow
+              key={exchange.exchange_id}
+              exchange={exchange}
+              selected={exchange.exchange_id === selectedExchangeId}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MemberRow({ exchange, selected, onSelect }: {
+  exchange: ExchangeSnapshot;
+  selected: boolean;
+  onSelect: (exchangeId: string) => void;
+}) {
+  const assignment = exchange.session;
+  const badges: string[] = [];
+  if (assignment?.fork) badges.push("fork");
+  if ((assignment?.repeat_index ?? 0) > 0) badges.push(`×${(assignment?.repeat_index ?? 0) + 1}`);
+  if (assignment?.model_changed) badges.push("model changed");
+  if (assignment?.tools_changed) badges.push("tools changed");
+  const indent = Math.min(Math.max((assignment?.depth ?? 1) - 1, 0), 6);
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      className={`traffic-member-row ${selected ? "selected" : ""}`}
+      style={{ paddingLeft: `${10 + indent * 12}px` }}
+      onClick={() => onSelect(exchange.exchange_id)}
+    >
+      <span className="traffic-member-depth">T{assignment?.depth ?? "?"}</span>
+      <span className={`state-pill state-${exchange.state}`}>{stateLabel(exchange.state)}</span>
+      {badges.length > 0 && <span className="traffic-member-badges">{badges.join(" · ")}</span>}
+      <span className="traffic-member-time">{formatWorkspaceTime(exchange.updated_at)}</span>
+    </button>
   );
 }

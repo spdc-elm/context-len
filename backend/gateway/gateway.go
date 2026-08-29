@@ -68,6 +68,12 @@ type Config struct {
 	// Events is an optional observer.  It receives the same immutable event
 	// values as the exchange registry and is suitable for workspace adapters.
 	Events exchange.EventSink
+
+	// SessionMaxPositions bounds the session index's in-memory position
+	// table. Zero means the session package default. When the bound is
+	// exceeded, least-recently-active sessions are evicted wholesale and
+	// their follow-ups become fresh roots.
+	SessionMaxPositions int
 }
 
 // Gateway is an HTTP handler and the owner of the concrete integration
@@ -85,6 +91,10 @@ type Gateway struct {
 	subMu sync.RWMutex
 	subs  map[uint64]func(exchange.Event)
 	subID atomic.Uint64
+
+	// sessions places captured requests into session trees. It observes the
+	// original inbound bytes only and never contributes transport input.
+	sessions *session.Index
 }
 
 // New constructs a gateway. It performs all network/upstream validation via
@@ -161,6 +171,7 @@ func New(cfg Config) (*Gateway, error) {
 		observer:   cfg.Events,
 		clientAuth: cfg.ClientAuth,
 		subs:       make(map[uint64]func(exchange.Event)),
+		sessions:   session.NewIndex(cfg.SessionMaxPositions),
 	}, nil
 }
 
@@ -287,12 +298,26 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	requestEnvelope := wire.RequestFromHTTP(r)
 	protocol := detectProtocol(requestEnvelope, requestArtifact.Bytes())
-	// Summary is an additive observation of the original inbound bytes. It is
-	// computed after capture and never becomes transport input; an unparseable
-	// or non-chat body simply yields an empty summary that is dropped.
+	// Summary and session placement are additive observations of the original
+	// inbound bytes. They are computed after capture and never become
+	// transport input; an unparseable or non-chat body yields empty facts
+	// that are dropped.
+	analysis := session.AnalyzeRequest(inspection.Protocol(protocol), requestArtifact.Bytes())
 	var summary *session.Summary
-	if requestSummary := session.SummarizeRequest(inspection.Protocol(protocol), requestArtifact.Bytes()); !requestSummary.Empty() {
-		summary = &requestSummary
+	if !analysis.Summary.Empty() {
+		summary = &analysis.Summary
+	}
+	exchangeID := exchange.NewExchangeID()
+	var placement *session.Assignment
+	if session.IsChatProtocol(inspection.Protocol(protocol)) {
+		assignment := g.sessions.Assign(exchangeID, session.RequestFacts{
+			Protocol:           inspection.Protocol(protocol),
+			MessageDigests:     analysis.MessageDigests,
+			Model:              analysis.Summary.Model,
+			ToolsDigest:        analysis.ToolsDigest,
+			PreviousResponseID: analysis.PreviousResponseID,
+		})
+		placement = &assignment
 	}
 	committed := &writeState{}
 	directWritten := &atomic.Bool{}
@@ -314,6 +339,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e, err := g.registry.Create(exchange.CreateParams{
+		ExchangeID:      exchangeID,
 		Protocol:        protocol,
 		RequestEnvelope: requestEnvelope,
 		RequestArtifact: requestArtifact,
@@ -323,6 +349,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Context:         r.Context(),
 		Events:          g.eventSink,
 		Summary:         summary,
+		Session:         placement,
 	})
 	if err != nil {
 		g.writeStoreError(w, err)
@@ -469,6 +496,7 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 			return exchange.UpstreamResponse{}, err
 		}
 		g.noteContextTokens(req.ExchangeID, protocol, artifact.Bytes())
+		g.noteResponseID(req.ExchangeID, protocol, artifact.Bytes())
 		return exchange.UpstreamResponse{Envelope: envelopeWithTimes(resp, started), Artifact: artifact}, nil
 	}
 
@@ -488,6 +516,7 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 		return exchange.UpstreamResponse{}, errors.New("gateway: response capture incomplete")
 	}
 	g.noteContextTokens(req.ExchangeID, protocol, artifact.Bytes())
+	g.noteResponseID(req.ExchangeID, protocol, artifact.Bytes())
 	return exchange.UpstreamResponse{
 		Envelope: envelopeWithTimes(resp, started),
 		Artifact: artifact,
@@ -807,6 +836,18 @@ func (g *Gateway) noteContextTokens(exchangeID string, protocol string, body []b
 		return
 	}
 	_ = g.registry.SetContextTokens(exchangeID, *tokens)
+}
+
+// noteResponseID registers a Responses response identifier with the session
+// index so a follow-up request carrying it as previous_response_id continues
+// the same conversation.
+func (g *Gateway) noteResponseID(exchangeID string, protocol string, body []byte) {
+	if g == nil || g.sessions == nil || protocol != string(inspection.ProtocolResponses) {
+		return
+	}
+	if responseID := session.ExtractResponseID(body); responseID != "" {
+		g.sessions.NoteResponseID(exchangeID, responseID)
+	}
 }
 
 func (g *Gateway) eventSink(event exchange.Event) {

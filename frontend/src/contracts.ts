@@ -85,6 +85,21 @@ export interface ExchangeSummary {
   context_tokens?: number;
 }
 
+/** Additive session placement computed from the original inbound request.
+ *  Structure comes from harness behaviour; never transport input. */
+export interface SessionAssignment {
+  session_id: string;
+  depth: number;
+  position?: string;
+  parent_position?: string;
+  parent_exchange_id?: string;
+  repeat_index?: number;
+  fork?: boolean;
+  model_changed?: boolean;
+  tools_changed?: boolean;
+  root?: boolean;
+}
+
 export interface ExchangeSnapshot {
   exchange_id: string;
   protocol: Protocol | (string & {});
@@ -100,6 +115,8 @@ export interface ExchangeSnapshot {
   error?: string;
   /** Capture-time observation projection; never transport input. */
   summary?: ExchangeSummary;
+  /** Session placement of the original inbound request. */
+  session?: SessionAssignment;
   /** Server may add fields; renderers must leave unknown fields untouched. */
   [extension: string]: unknown;
 }
@@ -126,6 +143,7 @@ export interface ExchangeSnapshotDelta {
   created_at?: string;
   updated_at?: string;
   summary?: ExchangeSummary;
+  session?: SessionAssignment;
 }
 
 

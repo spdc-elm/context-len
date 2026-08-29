@@ -109,6 +109,7 @@ func (r *Registry) Create(p CreateParams) (*Exchange, error) {
 		Revision:   1,
 		Warnings:   []string{},
 		Summary:    p.Summary.Clone(),
+		Session:    p.Session.Clone(),
 		Response:   ResponsePart{ArtifactRefs: []wire.ArtifactRef{}},
 		Request: RequestPart{
 			Envelope:     p.RequestEnvelope.Clone().Redacted(),
@@ -157,7 +158,11 @@ func (r *Registry) Create(p CreateParams) (*Exchange, error) {
 	return e, nil
 }
 
-func newExchangeID() string {
+func newExchangeID() string { return NewExchangeID() }
+
+// NewExchangeID generates a fresh exchange identifier for callers that need
+// the id before creating the exchange (for example to place it in a session).
+func NewExchangeID() string {
 	seq := exchangeIDCounter.Add(1)
 	return fmt.Sprintf("ex-%d-%d", time.Now().UTC().UnixNano(), seq)
 }
@@ -1015,6 +1020,7 @@ func (e *Exchange) initialEvent(kind EventKind) Event {
 		State:      e.snap.State,
 		UpdatedAt:  e.snap.UpdatedAt,
 		Summary:    e.snap.Summary.Clone(),
+		Session:    e.snap.Session.Clone(),
 	}
 	return Event{
 		EventID:       newEventID(),
@@ -1107,6 +1113,7 @@ func cloneSnapshot(s Snapshot) Snapshot {
 	s.Response = cloneResponsePart(s.Response)
 	s.Warnings = cloneStrings(s.Warnings)
 	s.Summary = s.Summary.Clone()
+	s.Session = s.Session.Clone()
 	return s
 }
 
@@ -1139,6 +1146,7 @@ func cloneDelta(d SnapshotDelta) SnapshotDelta {
 	}
 	d.Warnings = cloneStrings(d.Warnings)
 	d.Summary = d.Summary.Clone()
+	d.Session = d.Session.Clone()
 	return d
 }
 

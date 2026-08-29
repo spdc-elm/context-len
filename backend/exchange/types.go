@@ -102,22 +102,27 @@ type Snapshot struct {
 	// docs/session-spec.md. It is display-only metadata derived from wire
 	// bytes and never participates in transport decisions.
 	Summary *session.Summary `json:"summary,omitempty"`
+	// Session is the additive session placement computed from the original
+	// inbound request. Structure comes from harness behaviour and never
+	// changes after capture.
+	Session *session.Assignment `json:"session,omitempty"`
 }
 
 // SnapshotDelta is intentionally a delta-shaped event payload.  A full
 // Request/Response part is supplied only when artifact refs changed; ordinary
 // state transitions need only state, warnings, and updated_at.
 type SnapshotDelta struct {
-	ExchangeID string           `json:"exchange_id,omitempty"`
-	Protocol   string           `json:"protocol,omitempty"`
-	Request    *RequestPart     `json:"request,omitempty"`
-	Response   *ResponsePart    `json:"response,omitempty"`
-	Policy     *policy.Policy   `json:"policy,omitempty"`
-	State      State            `json:"state,omitempty"`
-	Warnings   []string         `json:"warnings,omitempty"`
-	UpdatedAt  time.Time        `json:"updated_at,omitempty"`
-	Error      string           `json:"error,omitempty"`
-	Summary    *session.Summary `json:"summary,omitempty"`
+	ExchangeID string              `json:"exchange_id,omitempty"`
+	Protocol   string              `json:"protocol,omitempty"`
+	Request    *RequestPart        `json:"request,omitempty"`
+	Response   *ResponsePart       `json:"response,omitempty"`
+	Policy     *policy.Policy      `json:"policy,omitempty"`
+	State      State               `json:"state,omitempty"`
+	Warnings   []string            `json:"warnings,omitempty"`
+	UpdatedAt  time.Time           `json:"updated_at,omitempty"`
+	Error      string              `json:"error,omitempty"`
+	Summary    *session.Summary    `json:"summary,omitempty"`
+	Session    *session.Assignment `json:"session,omitempty"`
 }
 
 // EventKind is the event vocabulary from the frozen runtime contract.
@@ -281,6 +286,9 @@ type CreateParams struct {
 	// gateway computes it from the original inbound request bytes; the
 	// exchange only stores and republishes it.
 	Summary *session.Summary
+	// Session is the additive session placement of the original inbound
+	// request, computed by the gateway's session index.
+	Session *session.Assignment
 	// Events receives immutable event values after a state transition commits.
 	// The callback is invoked without the exchange mutex held. A nil callback
 	// simply disables event delivery.

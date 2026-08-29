@@ -24,6 +24,7 @@ const chatExchange = snapshot({
   protocol: "chat_completions",
   state: "completed",
   summary: { model: "qwen3-235b", message_count: 18, preview: "Check the deadlock", tool_names: ["bash", "read"], context_tokens: 52300 },
+  session: { session_id: "sess-chat", depth: 1, position: "pos-chat", root: true },
 });
 
 const responsesExchange = snapshot({
@@ -31,6 +32,7 @@ const responsesExchange = snapshot({
   protocol: "responses",
   state: "upstream_running",
   summary: { model: "gpt-mock", message_count: 2 },
+  session: { session_id: "sess-responses", depth: 1, position: "pos-responses", root: true },
 });
 
 const otherExchange = snapshot({
@@ -61,6 +63,14 @@ describe("TrafficQueue", () => {
     });
   }
 
+  function switchView(label: string) {
+    const button = [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === label);
+    if (!button) throw new Error(`view toggle ${label} not found`);
+    act(() => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
   function setFilter(label: string, value: string) {
     const control = container.querySelector(`[aria-label="${label}"]`) as HTMLInputElement | HTMLSelectElement | null;
     if (!control) throw new Error(`filter ${label} not found`);
@@ -72,8 +82,17 @@ describe("TrafficQueue", () => {
     });
   }
 
+  it("groups conversation exchanges into session rows by default", () => {
+    render([chatExchange]);
+    expect(container.textContent).toContain("qwen3-235b");
+    expect(container.textContent).toContain("Check the deadlock");
+    expect(container.textContent).toContain("1 turn");
+    expect(container.textContent).not.toContain("/v1/chat/completions");
+  });
+
   it("shows summary fields instead of the URL for conversation protocols", () => {
     render([chatExchange]);
+    switchView("Exchanges");
     expect(container.textContent).toContain("qwen3-235b");
     expect(container.textContent).toContain("18 msgs");
     expect(container.textContent).toContain("52.3k ctx");
@@ -83,17 +102,20 @@ describe("TrafficQueue", () => {
 
   it("keeps the method and path as identity for non-conversation traffic", () => {
     render([otherExchange]);
+    switchView("Exchanges");
     expect(container.textContent).toContain("GET");
     expect(container.textContent).toContain("/v1/models");
   });
 
   it("renders an explicit dash when the upstream reported no usage", () => {
     render([responsesExchange]);
+    switchView("Exchanges");
     expect(container.textContent).toContain("— ctx");
   });
 
   it("narrows the queue by text, protocol, state, and model filters", () => {
     render([chatExchange, responsesExchange, otherExchange]);
+    switchView("Exchanges");
     setFilter("Filter exchanges by text", "deadlock");
     expect(container.querySelectorAll(".traffic-row")).toHaveLength(1);
     expect(container.textContent).toContain("Check the deadlock");

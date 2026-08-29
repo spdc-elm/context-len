@@ -6,7 +6,7 @@ describe("mock workspace API contract", () => {
   it("serves immutable opaque artifact bytes without network calls", async () => {
     const api = createMockWorkspaceApi();
     const exchanges = await api.listExchanges();
-    expect(exchanges).toHaveLength(3);
+    expect(exchanges).toHaveLength(4);
     const request = requestArtifact(exchanges[0]);
     expect(request?.storage_ref.startsWith("mock://")).toBe(true);
     const body = await api.readArtifact({ artifact_id: request!.artifact_id });

@@ -98,6 +98,32 @@ const responsesResponse = JSON.stringify(
   null,
   2,
 );
+const responsesRequest2 = JSON.stringify(
+  {
+    model: "mock-responses-model-2",
+    input: [
+      { type: "message", role: "user", content: [{ type: "input_text", text: "Hello from the mock" }] },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "Mock response" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "Now inspect the second turn" }] },
+    ],
+    reasoning: { effort: "low" },
+    stream: false,
+  },
+  null,
+  2,
+);
+const responsesResponse2 = JSON.stringify(
+  {
+    id: "resp_mock_02",
+    object: "response",
+    model: "mock-responses-model-2",
+    status: "completed",
+    output: [{ type: "message", id: "msg_02", role: "assistant", content: [{ type: "output_text", text: "Second mock turn" }] }],
+    usage: { input_tokens: 41, output_tokens: 6 },
+  },
+  null,
+  2,
+);
 const chatRequest = JSON.stringify(
   {
     model: "mock-chat-model",
@@ -175,6 +201,9 @@ function initialRecords(): MockRecord[] {
   const anthropicRequestArtifact = makeArtifact("mock-anthropic-request-in", "request.inbound", "request", anthropicRequest, "application/json");
   const anthropicResponseArtifact = makeArtifact("mock-anthropic-response-up", "response.upstream", "response", anthropicResponse, "text/event-stream");
 
+  const responsesRequestArtifact2 = makeArtifact("mock-responses-request2-in", "request.inbound", "request", responsesRequest2, "application/json");
+  const responsesResponseArtifact2 = makeArtifact("mock-responses-response2-up", "response.upstream", "response", responsesResponse2, "application/json");
+
   return [
     createRecord(
       {
@@ -188,10 +217,37 @@ function initialRecords(): MockRecord[] {
         created_at: "2026-08-27T10:12:00.000Z",
         updated_at: "2026-08-27T10:12:00.000Z",
         summary: { model: "mock-responses-model", message_count: 1, preview: "Hello from the mock", tool_names: ["lookup"], context_tokens: 12 },
+        session: { session_id: "sess-mock-responses", depth: 1, position: "mock-position-resp-1", root: true },
       },
       {
         [responseRequestArtifact.artifact_id]: responsesRequest,
         [responseResponseArtifact.artifact_id]: responsesResponse,
+      },
+    ),
+    createRecord(
+      {
+        exchange_id: "ex_mock_responses_02",
+        protocol: "responses",
+        request: requestPart(responsesRequestArtifact2, "/v1/responses"),
+        response: responsePart(responsesResponseArtifact2, responsesResponse2, "application/json"),
+        policy: { request_gate: "pass", response_gate: "pass" },
+        state: "completed",
+        warnings: [],
+        created_at: "2026-08-27T10:13:10.000Z",
+        updated_at: "2026-08-27T10:13:12.000Z",
+        summary: { model: "mock-responses-model-2", message_count: 3, preview: "Hello from the mock", context_tokens: 41 },
+        session: {
+          session_id: "sess-mock-responses",
+          depth: 2,
+          position: "mock-position-resp-2",
+          parent_position: "mock-position-resp-1",
+          parent_exchange_id: "ex_mock_responses_01",
+          model_changed: true,
+        },
+      },
+      {
+        [responsesRequestArtifact2.artifact_id]: responsesRequest2,
+        [responsesResponseArtifact2.artifact_id]: responsesResponse2,
       },
     ),
     createRecord(
@@ -206,6 +262,7 @@ function initialRecords(): MockRecord[] {
         created_at: "2026-08-27T10:11:35.000Z",
         updated_at: "2026-08-27T10:11:58.000Z",
         summary: { model: "mock-chat-model", message_count: 1, preview: "Stream a mock answer", tool_names: ["lookup"], context_tokens: 7 },
+        session: { session_id: "sess-mock-chat", depth: 1, position: "mock-position-chat-1", root: true },
       },
       {
         [chatRequestArtifact.artifact_id]: chatRequest,
@@ -224,6 +281,7 @@ function initialRecords(): MockRecord[] {
         created_at: "2026-08-27T10:10:00.000Z",
         updated_at: "2026-08-27T10:10:03.000Z",
         summary: { model: "mock-claude-model", message_count: 1, preview: "Inspect this request" },
+        session: { session_id: "sess-mock-claude", depth: 1, position: "mock-position-claude-1", root: true },
       },
       {
         [anthropicRequestArtifact.artifact_id]: anthropicRequest,
