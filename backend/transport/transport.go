@@ -42,7 +42,7 @@ var hopByHopHeaders = map[string]struct{}{
 }
 
 // HeaderPolicy controls the intentionally visible header changes made while
-// creating an upstream request.  Additional headers are profile-owned values
+// creating an upstream request. Additional headers are runtime-owned values
 // (for example a server-side credential) and therefore override an inbound
 // value with the same name.  Header values are copied before they are used.
 type HeaderPolicy struct {
@@ -146,7 +146,7 @@ func isInboundCredential(name string) bool {
 // any (forbidden) base query.
 type Config struct {
 	BaseURL *url.URL
-	// BaseURLString is a convenience for callers loading profile data.  If
+	// BaseURLString is a convenience for callers loading runtime configuration. If
 	// BaseURL is non-nil this field is ignored.
 	BaseURLString string
 	// Client is optional.  A shallow clone is made so setting a safe default
@@ -283,7 +283,7 @@ func validateBaseURL(base *url.URL) error {
 // decoded before the proxy can release them unchanged.
 func DefaultRoundTripper() http.RoundTripper {
 	return &http.Transport{
-		Proxy:                 nil, // profiles inject credentials directly; environment proxies cannot bypass origin safety,
+		Proxy:                 nil, // configured auth is explicit; environment proxies cannot bypass origin safety,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90e9, // 90 seconds, without importing time here
@@ -449,7 +449,7 @@ func (t *Transport) DoRequest(ctx context.Context, inbound *http.Request) (*http
 	return t.Do(ctx, inbound, nil)
 }
 
-// ValidateHeaderPolicy is useful for profile/configuration code that wants to
+// ValidateHeaderPolicy is useful for runtime configuration code that wants to
 // fail before serving traffic.
 func (p HeaderPolicy) Validate() error {
 	_, err := p.Apply(nil)

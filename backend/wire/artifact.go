@@ -322,7 +322,7 @@ func CaptureReaderContext(ctx context.Context, r io.Reader, opts CaptureOptions)
 	}
 
 	var captured bytes.Buffer
-	// Avoid a potentially enormous eager allocation when a profile configures
+	// Avoid a potentially enormous eager allocation when a caller configures
 	// a large safety limit; bytes.Buffer grows incrementally as data arrives.
 	if opts.MaxBytes > 0 && opts.MaxBytes < 64<<20 {
 		captured.Grow(int(opts.MaxBytes))

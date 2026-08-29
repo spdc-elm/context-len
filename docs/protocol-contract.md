@@ -104,7 +104,7 @@ message_stop
 
 ### `/v1/models`
 
-`GET /v1/models` 属于首个切片的透明探测入口。它使用同一个 upstream profile 和 header policy，默认把请求送到上游对应路径并把上游响应原样返回；context-lens 不生成虚假的本地模型目录，也不从响应中选择或改写后续请求的 `model`。模型列表失败应显示为上游错误，而不是被替换为空列表。
+`GET /v1/models` 属于首个切片的透明探测入口。它使用同一个 upstream runtime configuration 和 header policy，默认把请求送到上游对应路径并把上游响应原样返回；context-lens 不生成虚假的本地模型目录，也不从响应中选择或改写后续请求的 `model`。模型列表失败应显示为上游错误，而不是被替换为空列表。
 
 ## Wire authority
 
@@ -227,23 +227,21 @@ start/end timestamps
 - 自动跟随 redirect 关闭；Location 和 upstream status 按响应策略记录。
 - 为保持 compressed body 的 bytes，transport 默认不自动解压；编辑 compressed artifact 时必须显式产生新 encoding 并标记 body changed。
 
-## Upstream profile
+## Upstream runtime configuration
 
-profile 只负责：
+运行时配置与 transport 共同负责：
 
 ```text
-profile_id
-label
-origin / base URL
-path mapping
-credential scheme
-credential reference
+base_url
+upstream_auth_mode: passthrough | configured
+server-side upstream api_key（仅 configured 模式）
+optional client_auth gate
 additional safe headers
-network safety policy
+loopback / network safety policy
 timeout / capture limits
 ```
 
-profile 不负责：
+运行时配置不负责：
 
 ```text
 model default
@@ -252,7 +250,7 @@ sampling normalization
 stream forcing
 ```
 
-默认路径映射必须能把三个入口分别送到同协议上游路径。若上游路径不匹配，代理显示 mismatch 并把上游错误交回，不自动转换。
+transport 保留入站请求的同协议路径、原始 query 和 body bytes；若上游路径或能力不匹配，代理显示 mismatch 并把上游错误交回，不自动转换。
 
 ## Inspection projection
 

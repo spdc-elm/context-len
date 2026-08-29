@@ -86,7 +86,7 @@ type Gateway struct {
 	subID atomic.Uint64
 }
 
-// New constructs a gateway.  It performs all network/profile validation via
+// New constructs a gateway. It performs all network/upstream validation via
 // transport.New and creates a bounded-independent persistence store when one
 // was not supplied.
 func New(cfg Config) (*Gateway, error) {

@@ -129,7 +129,7 @@ func TestFixturePassPass(t *testing.T) {
 			tr, err := transport.New(transport.Config{
 				BaseURL: upstreamURL,
 				HeaderPolicy: transport.HeaderPolicy{Additional: http.Header{
-					"X-Profile-Marker": {"fixture-profile"},
+					"X-Test-Marker": {"fixture-marker"},
 				}},
 			})
 			if err != nil {
@@ -201,8 +201,8 @@ func TestFixturePassPass(t *testing.T) {
 			if got.headers.Get("X-Trace-ID") != "fixture-trace" {
 				t.Fatalf("trace header was not forwarded: %q", got.headers.Get("X-Trace-ID"))
 			}
-			if got.headers.Get("X-Profile-Marker") != "fixture-profile" {
-				t.Fatalf("profile header was not injected: %q", got.headers.Get("X-Profile-Marker"))
+			if got.headers.Get("X-Test-Marker") != "fixture-marker" {
+				t.Fatalf("test header was not injected: %q", got.headers.Get("X-Test-Marker"))
 			}
 			for _, name := range []string{"Authorization", "Cookie", "Connection", "Proxy-Authorization"} {
 				if value := got.headers.Get(name); value != "" {
