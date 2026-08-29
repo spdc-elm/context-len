@@ -296,8 +296,9 @@ describe("ChatTemplateView", () => {
         eventCount: 1,
       },
     });
+    const liveBlock = rendered.querySelector('[data-source-json-pointer="/events/0"].ctx-block');
+    expect(liveBlock?.querySelector(':scope > .ctx-tag-line > .chevron')?.getAttribute("aria-expanded")).toBe("true");
     expandTopLevelBlocks(rendered);
-    expect(rendered.querySelector(".chat-template-view")?.getAttribute("data-live")).toBe("true");
     expect(rendered.querySelector(".chat-live-chip")?.textContent).toContain("response · streaming · 1 events");
     expect(rendered.textContent).toContain("hi");
     expect(rendered.textContent).toContain("growing answer");

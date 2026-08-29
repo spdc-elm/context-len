@@ -585,3 +585,19 @@ body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
   .viewer-search input { width: 125px; }
   .artifact-picker { padding-left: 3px; }
 }
+
+/* The live response is the one useful exception to the compact Chat Template
+   default: keep it open so the stream visibly breathes into the viewport. */
+.empty-detail-hero { text-align: center; }
+.empty-detail-kicker { justify-content: center; }
+.empty-detail-lede { margin-left: auto; margin-right: auto; }
+.empty-detail-flow { margin-left: auto; margin-right: auto; text-align: left; }
+.empty-detail-capabilities { justify-content: center; }
+.empty-detail-hero h1 {
+  max-width: none;
+  white-space: nowrap;
+  font-size: clamp(32px, 3.35vw, 52px);
+}
+@media (max-width: 1000px) {
+  .empty-detail-hero h1 { white-space: normal; }
+}

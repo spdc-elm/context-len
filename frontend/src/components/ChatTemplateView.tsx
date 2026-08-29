@@ -245,7 +245,7 @@ function blockToSegment(block: ContextBlock, index: number): TagSegment {
     marker: true,
     blockKind: block.kind,
     pointer: block.sourcePointer,
-    defaultOpen: false,
+    defaultOpen: block.id.startsWith("live:"),
     children,
   };
 }
