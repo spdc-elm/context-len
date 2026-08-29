@@ -167,7 +167,9 @@ describe("TrafficQueue", () => {
 
     const chevron = container.querySelector(".traffic-session-chevron");
     if (!chevron) throw new Error("session expander not found");
+    const callsBeforeExpand = calls.length;
     act(() => chevron.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(calls).toHaveLength(callsBeforeExpand);
     const member = container.querySelector(".traffic-member-row");
     if (!member) throw new Error("member row not found");
     act(() => member.dispatchEvent(new MouseEvent("click", { bubbles: true })));
