@@ -15,17 +15,15 @@ import (
 	"time"
 	"unicode"
 
+	"context-lens/backend/catalog"
 	"context-lens/backend/exchange"
 	"context-lens/backend/policy"
 	"context-lens/backend/wire"
 )
 
-// ArtifactMatch is a byte-offset match returned by the optional artifact
-// search operation.  End is exclusive, matching ArtifactRead's range shape.
-type ArtifactMatch struct {
-	Start int64 `json:"start"`
-	End   int64 `json:"end"`
-}
+// ArtifactMatch is an alias for the shared wire-level search DTO. Keeping the
+// workspace name preserves API/source compatibility for existing callers.
+type ArtifactMatch = wire.ArtifactMatch
 
 // ArtifactSearchResult is returned when an artifact request includes a
 // search/q query.  Search never changes the stored artifact and only returns
@@ -50,8 +48,9 @@ type apiError struct {
 
 // ServeHTTP routes all workspace API endpoints.  Endpoint paths are:
 //
-//	GET  /api/exchanges
-//	GET  /api/exchanges/{id}
+//	GET    /api/exchanges
+//	DELETE /api/exchanges
+//	GET    /api/exchanges/{id}
 //	POST /api/exchanges/{id}/command (and /commands)
 //	GET  /api/artifacts/{id}
 //	GET/PUT /api/policy
@@ -149,14 +148,41 @@ func routeRest(requestPath, prefix string) (string, bool) {
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter) {
-	w.Header().Set("Allow", "GET, HEAD, POST, PUT, PATCH, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, OPTIONS")
+	w.Header().Set("Allow", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID, Range")
 	w.Header().Set("Access-Control-Max-Age", "300")
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleExchangeClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		methodNotAllowed(w, http.MethodDelete)
+		return
+	}
+	if s.clearQueue == nil {
+		writeAPIError(w, http.StatusNotImplemented, "clear_unavailable", "queue clearing is not configured")
+		return
+	}
+	if err := s.clearQueue(r.Context()); err != nil {
+		if errors.Is(err, context.Canceled) {
+			writeAPIError(w, http.StatusRequestTimeout, "cancelled", "queue clear cancelled")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "clear_failed", "queue clear failed")
+		return
+	}
+	if s.events != nil {
+		s.events.ClearHistory()
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"cleared": true})
+}
+
 func (s *Server) handleExchangeList(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodDelete {
+		s.handleExchangeClear(w, r)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		methodNotAllowed(w, http.MethodGet)
 		return
@@ -165,24 +191,73 @@ func (s *Server) handleExchangeList(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "backend_unavailable", "exchange backend is not configured")
 		return
 	}
-	items, err := s.listExchanges(r.Context())
-	if err != nil {
-		s.writeBackendError(w, err)
-		return
-	}
-	limit, offset, err := parseListWindow(r.URL.Query(), s.config.MaxExchanges)
+	query := r.URL.Query()
+	limit, offset, err := parseListWindow(query, s.config.MaxExchanges)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_window", err.Error())
 		return
 	}
-	if offset > len(items) {
-		offset = len(items)
+	cursor := strings.TrimSpace(query.Get("cursor"))
+	// Preserve the original raw-array response for an unqualified GET. The
+	// additive page envelope is opt-in via an explicit limit or cursor.
+	pagedRequest := false
+	if _, ok := query["limit"]; ok {
+		pagedRequest = true
 	}
-	end := offset + limit
-	if end > len(items) {
-		end = len(items)
+	if _, ok := query["cursor"]; ok {
+		pagedRequest = true
 	}
-	items = items[offset:end]
+	var items []exchange.Snapshot
+	var nextCursor string
+	if pagedRequest {
+		if paged, ok := s.backend.(PagedExchangeBackend); ok {
+			items, nextCursor, err = paged.ListExchangesPage(r.Context(), limit, cursor)
+		} else {
+			items, err = s.listExchanges(r.Context())
+			if err == nil {
+				if cursor != "" {
+					o, parseErr := strconv.Atoi(cursor)
+					if parseErr != nil || o < 0 {
+						writeAPIError(w, http.StatusBadRequest, "invalid_cursor", "cursor is invalid")
+						return
+					}
+					offset = o
+				}
+				if offset > len(items) {
+					offset = len(items)
+				}
+				end := offset + limit
+				if end > len(items) {
+					end = len(items)
+				}
+				if end < len(items) {
+					nextCursor = strconv.Itoa(end)
+				}
+				items = items[offset:end]
+			}
+		}
+	} else {
+		items, err = s.listExchanges(r.Context())
+		// Keep the legacy offset window behavior and raw-array shape. Offset is
+		// retained for older callers; new cursor/limit callers use the envelope.
+		if err == nil && (offset > 0 || query.Get("offset") != "") {
+			if offset > len(items) {
+				offset = len(items)
+			}
+			end := offset + limit
+			if end > len(items) {
+				end = len(items)
+			}
+			items = items[offset:end]
+		}
+	}
+	if err != nil {
+		s.writeBackendError(w, err)
+		return
+	}
+	if nextCursor != "" {
+		w.Header().Set("X-Next-Cursor", nextCursor)
+	}
 	redacted := make([]exchange.Snapshot, len(items))
 	for i, item := range items {
 		redacted[i] = redactSnapshot(item)
@@ -191,10 +266,18 @@ func (s *Server) handleExchangeList(w http.ResponseWriter, r *http.Request) {
 		redacted = []exchange.Snapshot{}
 	}
 	if r.Method == http.MethodHead {
-		writeJSONHead(w, http.StatusOK, redacted)
+		if pagedRequest {
+			writeJSONHead(w, http.StatusOK, map[string]any{"exchanges": redacted, "next_cursor": nextCursor, "has_more": nextCursor != ""})
+		} else {
+			writeJSONHead(w, http.StatusOK, redacted)
+		}
 		return
 	}
-	s.writeJSON(w, http.StatusOK, redacted)
+	if pagedRequest {
+		s.writeJSON(w, http.StatusOK, map[string]any{"exchanges": redacted, "next_cursor": nextCursor, "has_more": nextCursor != ""})
+	} else {
+		s.writeJSON(w, http.StatusOK, redacted)
+	}
 }
 
 func parseListWindow(values url.Values, max int) (int, int, error) {
@@ -512,6 +595,31 @@ func (s *Server) handleArtifactSearch(w http.ResponseWriter, r *http.Request, ar
 }
 
 func (s *Server) handleArtifactBody(w http.ResponseWriter, r *http.Request, artifactID string) {
+	// HEAD is metadata-only for range-capable stores: never read or allocate
+	// body bytes merely to calculate response headers.
+	if r.Method == http.MethodHead {
+		ref, err := s.artifactRef(r.Context(), artifactID)
+		if err != nil {
+			s.writeArtifactError(w, err)
+			return
+		}
+		start, end, partial, err := parseArtifactRange(r, ref.Size)
+		if err != nil {
+			s.writeArtifactError(w, err)
+			return
+		}
+		if end-start > s.config.MaxArtifactBytes {
+			s.writeArtifactError(w, ErrArtifactTooLarge)
+			return
+		}
+		setArtifactHeaders(w, ref, start, end, partial, r.URL.Query().Get("download"))
+		if partial {
+			w.WriteHeader(http.StatusPartialContent)
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+		return
+	}
 	ref, body, start, end, partial, err := s.readArtifactRequest(r.Context(), r, artifactID)
 	if err != nil {
 		s.writeArtifactError(w, err)
@@ -664,6 +772,8 @@ func parseHTTPRange(raw string, size int64) (int64, int64, error) {
 	return start, end, nil
 }
 
+// Artifact loaded ranges use an end-exclusive interval [start,end), matching
+// ReadRange and query start/end semantics. Content-Range remains HTTP inclusive.
 func setArtifactHeaders(w http.ResponseWriter, ref wire.ArtifactRef, start, end int64, partial bool, download string) {
 	contentType := ref.ContentType
 	if strings.ContainsAny(contentType, "\r\n") || strings.TrimSpace(contentType) == "" {
@@ -675,6 +785,12 @@ func setArtifactHeaders(w http.ResponseWriter, ref wire.ArtifactRef, start, end 
 	w.Header().Set("X-Artifact-ID", ref.ArtifactID)
 	w.Header().Set("X-Artifact-SHA256", ref.SHA256)
 	w.Header().Set("X-Artifact-Complete", strconv.FormatBool(ref.Complete))
+	// Capture completeness describes whether the producer reached EOF; loaded
+	// range describes only bytes returned by this request and is independent.
+	w.Header().Set("X-Artifact-Capture-Complete", strconv.FormatBool(ref.Complete))
+	w.Header().Set("X-Artifact-Loaded-Start", strconv.FormatInt(start, 10))
+	w.Header().Set("X-Artifact-Loaded-End", strconv.FormatInt(end, 10))
+	w.Header().Set("X-Artifact-Loaded-Range", fmt.Sprintf("bytes %d-%d", start, end))
 	w.Header().Set("X-Artifact-Total-Size", strconv.FormatInt(ref.Size, 10))
 	// Content-Encoding is intentionally not copied to the HTTP response.  The
 	// endpoint returns exact stored application bytes; setting it would invite
@@ -789,6 +905,8 @@ func (s *Server) artifactRef(ctx context.Context, artifactID string) (wire.Artif
 	)
 	if rangeStore, ok := s.artifacts.(RangeArtifactStore); ok {
 		ref, err = rangeStore.ArtifactRef(ctx, artifactID)
+	} else if metadataStore, ok := s.artifacts.(ArtifactMetadataStore); ok {
+		ref, err = metadataStore.ArtifactRef(ctx, artifactID)
 	} else {
 		artifact, getErr := s.artifacts.Get(ctx, artifactID)
 		if getErr != nil {
@@ -821,8 +939,19 @@ func (s *Server) searchArtifact(ctx context.Context, artifactID string, query []
 		if err != nil {
 			return nil, wire.ArtifactRef{}, err
 		}
+		if err := validateArtifactRef(ref, artifactID); err != nil {
+			return nil, wire.ArtifactRef{}, err
+		}
 		matches, err := rangeStore.Search(ctx, artifactID, query, limit)
-		return matches, ref, err
+		if err != nil {
+			return nil, wire.ArtifactRef{}, err
+		}
+		for _, match := range matches {
+			if match.Start < 0 || match.End < match.Start || match.End > ref.Size {
+				return nil, wire.ArtifactRef{}, ErrArtifactInvalid
+			}
+		}
+		return matches, ref, nil
 	}
 	artifact, err := s.artifacts.Get(ctx, artifactID)
 	if err != nil {
@@ -885,6 +1014,8 @@ func (s *Server) writeBackendError(w http.ResponseWriter, err error) {
 
 func classifyBackendError(err error) (int, string, string) {
 	switch {
+	case errors.Is(err, catalog.ErrInvalidCursor), errors.Is(err, ErrInvalidCursor):
+		return http.StatusBadRequest, "invalid_cursor", "cursor is invalid"
 	case errors.Is(err, exchange.ErrNotFound):
 		return http.StatusNotFound, "not_found", "exchange not found"
 	case errors.Is(err, exchange.ErrRevisionConflict):
@@ -911,6 +1042,10 @@ func (s *Server) writeArtifactError(w http.ResponseWriter, err error) {
 		status, code, message = http.StatusNotFound, "not_found", "artifact not found"
 	case errors.Is(err, ErrArtifactTooLarge):
 		status, code, message = http.StatusRequestEntityTooLarge, "artifact_too_large", "artifact exceeds configured body limit"
+	case errors.Is(err, ErrArtifactQuota):
+		status, code, message = http.StatusRequestEntityTooLarge, "quota_exceeded", "artifact quota exceeded"
+	case errors.Is(err, ErrArtifactStoreUnavailable):
+		status, code, message = http.StatusServiceUnavailable, "store_unavailable", "artifact store unavailable"
 	case errors.Is(err, ErrArtifactRange):
 		status, code, message = http.StatusRequestedRangeNotSatisfiable, "invalid_range", "artifact range is invalid"
 	case errors.Is(err, ErrArtifactInvalid):
@@ -920,7 +1055,44 @@ func (s *Server) writeArtifactError(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.DeadlineExceeded):
 		status, code, message = http.StatusGatewayTimeout, "timeout", "artifact operation timed out"
 	}
+	var classifier ArtifactErrorClassifier
+	if errors.As(err, &classifier) {
+		// Adapters may classify implementation errors, but their returned text
+		// is not trusted: never reflect backend/store details (which may include
+		// paths, request bodies, or credentials) into the workspace response.
+		status, code, _ := classifier.ArtifactHTTPError()
+		if stableStatus, stableCode, stableMessage, ok := stableArtifactClass(status, code); ok {
+			writeAPIError(w, stableStatus, stableCode, stableMessage)
+			return
+		}
+	}
 	writeAPIError(w, status, code, message)
+}
+
+func stableArtifactClass(status int, code string) (int, string, string, bool) {
+	// Keep this list intentionally small and protocol-facing. Unknown adapter
+	// classes become the generic error below rather than exposing free-form text.
+	switch code {
+	case "not_found":
+		return http.StatusNotFound, code, "artifact not found", true
+	case "artifact_too_large":
+		return http.StatusRequestEntityTooLarge, code, "artifact exceeds configured body limit", true
+	case "quota_exceeded":
+		return http.StatusRequestEntityTooLarge, code, "artifact quota exceeded", true
+	case "store_unavailable":
+		return http.StatusServiceUnavailable, code, "artifact store unavailable", true
+	case "invalid_range":
+		return http.StatusRequestedRangeNotSatisfiable, code, "artifact range is invalid", true
+	case "invalid_artifact":
+		return http.StatusUnprocessableEntity, code, "stored artifact is invalid", true
+	case "cancelled":
+		return http.StatusRequestTimeout, code, "request cancelled", true
+	case "timeout":
+		return http.StatusGatewayTimeout, code, "artifact operation timed out", true
+	default:
+		_ = status
+		return 0, "", "", false
+	}
 }
 
 func redactSnapshot(in exchange.Snapshot) exchange.Snapshot {

@@ -26,6 +26,10 @@ var (
 	ErrArtifactTooLarge = errors.New("workspace: artifact exceeds configured body limit")
 	// ErrArtifactRange identifies malformed or unsatisfiable byte ranges.
 	ErrArtifactRange = errors.New("workspace: invalid artifact range")
+	// Stable classes for adapters (including durable stores) to wrap without
+	// exposing implementation details through the HTTP API.
+	ErrArtifactQuota            = errors.New("workspace: artifact quota exceeded")
+	ErrArtifactStoreUnavailable = errors.New("workspace: artifact store unavailable")
 )
 
 // MemoryArtifactStore is a small immutable in-memory blob store for the local
@@ -133,28 +137,60 @@ func (s *MemoryArtifactStore) Search(ctx context.Context, artifactID string, que
 	if limit < 0 {
 		limit = 0
 	}
-	a, err := s.Get(ctx, artifactID)
+	ref, err := s.ArtifactRef(ctx, artifactID)
 	if err != nil {
 		return nil, err
 	}
-	body := a.Bytes()
+	const chunkSize int64 = 64 << 10
 	matches := make([]ArtifactMatch, 0)
-	for at := 0; at+len(query) <= len(body); {
-		if err := contextErr(ctx); err != nil {
+	var carry []byte
+	for pos := int64(0); pos < ref.Size && len(matches) < limit; {
+		end := pos + chunkSize
+		if end > ref.Size {
+			end = ref.Size
+		}
+		part, err := s.ReadRange(ctx, artifactID, pos, end)
+		if err != nil {
 			return nil, err
 		}
-		rel := bytes.Index(body[at:], query)
-		if rel < 0 {
-			break
+		data := append(carry, part...)
+		base := pos - int64(len(carry))
+		for at := 0; at+len(query) <= len(data) && len(matches) < limit; {
+			rel := bytes.Index(data[at:], query)
+			if rel < 0 {
+				break
+			}
+			start := at + rel
+			if start+len(query) > len(carry) || pos == 0 {
+				matches = append(matches, ArtifactMatch{Start: base + int64(start), End: base + int64(start+len(query))})
+			}
+			at = start + 1
 		}
-		start := at + rel
-		matches = append(matches, ArtifactMatch{Start: int64(start), End: int64(start + len(query))})
-		if len(matches) >= limit {
-			break
+		keep := len(query) - 1
+		if keep < 0 {
+			keep = 0
 		}
-		at = start + 1
+		if keep > len(data) {
+			keep = len(data)
+		}
+		carry = append([]byte(nil), data[len(data)-keep:]...)
+		pos = end
 	}
 	return matches, nil
+}
+
+// Clear removes all artifacts while leaving the store ready for new bodies.
+func (s *MemoryArtifactStore) Clear(ctx context.Context) error {
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
+	if s == nil {
+		return errors.New("workspace: nil artifact store")
+	}
+	s.mu.Lock()
+	s.items = make(map[string]wire.BodyArtifact)
+	s.mu.Unlock()
+	return nil
 }
 
 // IDs returns the known ids in sorted order.  It is useful for diagnostics and

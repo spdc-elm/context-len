@@ -259,6 +259,16 @@ export class LocalWorkspaceApi implements WorkspaceApi {
     }
   }
 
+  async listExchangesPage(limit: number, cursor?: string, signal?: AbortSignal): Promise<import("./contracts").ExchangePage> {
+    const params = new URLSearchParams({ limit: String(Math.max(1, Math.min(limit, 1000))) });
+    if (cursor) params.set("cursor", cursor);
+    const payload = await this.request<unknown>(`${this.prefix}/exchanges?${params.toString()}`, { method: "GET" }, signal);
+    const record = asRecord(payload);
+    const exchanges = unwrap<unknown>(payload, ["exchanges", "items", "data"]);
+    if (!Array.isArray(exchanges)) throw new Error("workspace API exchanges response is not an array");
+    return { exchanges: exchanges as ExchangeSnapshot[], next_cursor: typeof record?.next_cursor === "string" ? record.next_cursor : undefined, has_more: record?.has_more === true };
+  }
+
   async listExchanges(signal?: AbortSignal): Promise<ExchangeSnapshot[]> {
     const payload = await this.request<unknown>(`${this.prefix}/exchanges`, { method: "GET" }, signal);
     const exchanges = unwrap<unknown>(payload, ["exchanges", "items", "data"]);
@@ -305,9 +315,14 @@ export class LocalWorkspaceApi implements WorkspaceApi {
       ? envelope.total_size
       : range.total ?? parseNumberHeader(response.headers, "x-artifact-total-size") ?? Math.max(end, parseNumberHeader(response.headers, "content-length") ?? end);
     const completeHeader = response.headers.get("x-artifact-complete");
-    const complete = envelope && typeof envelope.complete === "boolean"
+    const artifactComplete = envelope && typeof envelope.complete === "boolean"
       ? envelope.complete
       : completeHeader ? completeHeader === "true" : end >= totalSize;
+    // `complete` describes the bytes loaded into this browser value, not just
+    // whether the capture itself reached EOF. A bounded range of a complete
+    // artifact is still an incomplete client-side document and must never be
+    // parsed as if it were whole JSON.
+    const complete = artifactComplete && start === 0 && end >= totalSize;
     return {
       artifact_id: typeof envelope?.artifact_id === "string" ? envelope.artifact_id : request.artifact_id,
       bytes,
@@ -342,6 +357,14 @@ export class LocalWorkspaceApi implements WorkspaceApi {
       body: JSON.stringify(policy),
     }, signal);
     return unwrap<WorkspacePolicy>(payload, ["policy"]);
+  }
+
+  async clearExchanges(signal?: AbortSignal): Promise<void> {
+    await this.request<unknown>(`${this.prefix}/exchanges`, {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }, signal);
   }
 
   subscribe(listener: (event: ExchangeEvent) => void): () => void {

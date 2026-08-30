@@ -5,6 +5,7 @@ import {
   type CommandResult,
   type ExchangeEvent,
   type ExchangeSnapshot,
+  type ExchangePage,
   type GateMode,
   type MutationResult,
   type WorkspaceApi,
@@ -365,6 +366,15 @@ export class MockWorkspaceApi implements WorkspaceApi {
     }
   }
 
+  async listExchangesPage(limit: number, cursor?: string, _signal?: AbortSignal): Promise<ExchangePage> {
+    const all = await this.listExchanges();
+    const offset = Math.max(0, Number(cursor ?? "0") || 0);
+    const size = Math.max(1, Math.min(limit, 1000));
+    const exchanges = all.slice(offset, offset + size);
+    const next = offset + exchanges.length < all.length ? String(offset + exchanges.length) : undefined;
+    return { exchanges, next_cursor: next, has_more: Boolean(next) };
+  }
+
   async listExchanges(_signal?: AbortSignal): Promise<ExchangeSnapshot[]> {
     return [...this.records.values()].map(({ snapshot }) => clone(snapshot));
   }
@@ -450,6 +460,11 @@ export class MockWorkspaceApi implements WorkspaceApi {
   async setPolicy(policy: WorkspacePolicy, _signal?: AbortSignal): Promise<WorkspacePolicy> {
     this.policy = { ...policy };
     return { ...this.policy };
+  }
+
+  async clearExchanges(_signal?: AbortSignal): Promise<void> {
+    this.records.clear();
+    this.revisions.clear();
   }
 
   subscribe(listener: (event: ExchangeEvent) => void): () => void {

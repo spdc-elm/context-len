@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -87,6 +88,121 @@ func decodeJSONResponse(t *testing.T, recorder *httptest.ResponseRecorder, dst a
 	if err := json.Unmarshal(recorder.Body.Bytes(), dst); err != nil {
 		t.Fatalf("decode response: %v; body=%q", err, recorder.Body.String())
 	}
+}
+
+func TestArtifactHeadDoesNotReadRange(t *testing.T) {
+	a := wire.NewArtifact([]byte("metadata-only"), wire.ArtifactOptions{ArtifactID: "head-only"})
+	store := &headOnlyRangeStore{ref: a.Ref()}
+	r := httptest.NewRecorder()
+	New(Config{Artifacts: store}).ServeHTTP(r, httptest.NewRequest(http.MethodHead, "/api/artifacts/head-only?start=0&end=4", nil))
+	if r.Code != http.StatusPartialContent || r.Header().Get("Content-Length") != "4" || store.reads != 0 || store.gets != 0 {
+		t.Fatalf("HEAD = %d headers=%#v reads=%d gets=%d", r.Code, r.Header(), store.reads, store.gets)
+	}
+}
+
+type headOnlyRangeStore struct {
+	ref         wire.ArtifactRef
+	reads, gets int
+}
+
+func (s *headOnlyRangeStore) ArtifactRef(context.Context, string) (wire.ArtifactRef, error) {
+	return s.ref, nil
+}
+func (s *headOnlyRangeStore) ReadRange(context.Context, string, int64, int64) ([]byte, error) {
+	s.reads++
+	panic("ReadRange called by HEAD")
+}
+func (s *headOnlyRangeStore) Search(context.Context, string, []byte, int) ([]ArtifactMatch, error) {
+	return nil, nil
+}
+func (s *headOnlyRangeStore) Get(context.Context, string) (wire.BodyArtifact, error) {
+	s.gets++
+	panic("Get called by HEAD")
+}
+
+func TestArtifactErrorClassifierDoesNotLeakMessage(t *testing.T) {
+	store := &classifiedArtifactStore{}
+	r := httptest.NewRecorder()
+	New(Config{Artifacts: store}).ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/api/artifacts/nope", nil))
+	if r.Code != http.StatusBadRequest || strings.Contains(r.Body.String(), "secret-path") || strings.Contains(r.Body.String(), "token") {
+		t.Fatalf("classifier leak/status: %d %q", r.Code, r.Body.String())
+	}
+}
+
+type classifiedArtifactStore struct{}
+
+func (*classifiedArtifactStore) Get(context.Context, string) (wire.BodyArtifact, error) {
+	return wire.BodyArtifact{}, classifiedArtifactError{}
+}
+
+type classifiedArtifactError struct{}
+
+func (classifiedArtifactError) Error() string { return "secret-path token" }
+func (classifiedArtifactError) ArtifactHTTPError() (int, string, string) {
+	return http.StatusInternalServerError, "backend_secret", "secret-path token"
+}
+
+func TestWorkspaceLargeRangeSeparatesCaptureAndLoadedCompleteness(t *testing.T) {
+	body := make([]byte, 2<<20)
+	for i := range body {
+		body[i] = byte(i)
+	}
+	a := wire.NewArtifact(body, wire.ArtifactOptions{ArtifactID: "large", Stage: wire.StageResponseUpstream})
+	store := NewMemoryArtifactStore(0)
+	if err := store.Put(a); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRecorder()
+	New(Config{Artifacts: store, MaxArtifactBytes: 2 << 20}).ServeHTTP(r, httptest.NewRequest(http.MethodHead, "/api/artifacts/large?start=0&end=1048576", nil))
+	if r.Code != http.StatusPartialContent || r.Header().Get("X-Artifact-Complete") != "true" || r.Header().Get("X-Artifact-Loaded-Range") != "bytes 0-1048576" {
+		t.Fatalf("headers = %d %#v", r.Code, r.Header())
+	}
+}
+
+func TestWorkspacePaginationCursor(t *testing.T) {
+	backend := &pagedTestBackend{items: []exchange.Snapshot{{ExchangeID: "a"}, {ExchangeID: "b"}, {ExchangeID: "c"}}}
+	r := httptest.NewRecorder()
+	New(Config{Backend: backend, MaxExchanges: 2}).ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/api/exchanges?limit=2", nil))
+	if r.Code != http.StatusOK || r.Header().Get("X-Next-Cursor") != "2" {
+		t.Fatalf("first page = %d %q", r.Code, r.Header().Get("X-Next-Cursor"))
+	}
+	var got struct {
+		Exchanges  []exchange.Snapshot `json:"exchanges"`
+		NextCursor string              `json:"next_cursor"`
+		HasMore    bool                `json:"has_more"`
+	}
+	decodeJSONResponse(t, r, &got)
+	if len(got.Exchanges) != 2 || got.NextCursor != "2" || !got.HasMore {
+		t.Fatalf("page = %#v", got)
+	}
+}
+
+type pagedTestBackend struct{ items []exchange.Snapshot }
+
+func (b *pagedTestBackend) ListExchanges() ([]exchange.Snapshot, error) { return b.items, nil }
+func (b *pagedTestBackend) GetExchange(string) (exchange.Snapshot, error) {
+	return exchange.Snapshot{}, exchange.ErrNotFound
+}
+func (b *pagedTestBackend) Command(exchange.Command) (exchange.CommandResult, error) {
+	return exchange.CommandResult{}, exchange.ErrNotFound
+}
+func (b *pagedTestBackend) ListExchangesPage(_ context.Context, limit int, cursor string) ([]exchange.Snapshot, string, error) {
+	off := 0
+	if cursor != "" {
+		off, _ = strconv.Atoi(cursor)
+	}
+	if off > len(b.items) {
+		off = len(b.items)
+	}
+	end := off + limit
+	if end > len(b.items) {
+		end = len(b.items)
+	}
+	next := ""
+	if end < len(b.items) {
+		next = strconv.Itoa(end)
+	}
+	return b.items[off:end], next, nil
 }
 
 func TestWorkspaceListGetRedactsHeaders(t *testing.T) {

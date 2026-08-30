@@ -43,9 +43,11 @@ interface ExchangeDetailProps {
   onTabChange: (tab: DetailTab) => void;
   loadedBodies: Record<string, LoadedArtifact>;
   bodyLoading: boolean;
+  bodyLoadErrorArtifactId?: string;
   search: string;
   onSearchChange: (value: string) => void;
   onLoadBody: (artifact: ArtifactRef) => void;
+  onRetryBody: (artifact: ArtifactRef) => void;
   onDownloadBody: (artifact: ArtifactRef) => void;
   onCommand: (intent: CommandIntent) => void;
   commandBusy: boolean;
@@ -226,9 +228,9 @@ function projectionFromBody(body: string, artifact: ArtifactRef | undefined, pro
   }
 }
 
-function ProjectionBody({ exchange, tab, body, artifact, live }: { exchange: ExchangeSnapshot; tab: DetailTab; body?: string; artifact?: ArtifactRef; live?: LiveStreamState }) {
+function ProjectionBody({ exchange, tab, body, artifact, bodyComplete = true, live }: { exchange: ExchangeSnapshot; tab: DetailTab; body?: string; artifact?: ArtifactRef; bodyComplete?: boolean; live?: LiveStreamState }) {
   const stored = tab === "sse" ? exchange.response.projection : exchange.request.projection ?? exchange.response.projection;
-  const projection = body !== undefined && (!stored || stored.parse_status === "not_attempted" || (tab === "sse" && !stored.stream_events?.length))
+  const projection = body !== undefined && bodyComplete && (!stored || stored.parse_status === "not_attempted" || (tab === "sse" && !stored.stream_events?.length))
     ? projectionFromBody(body, artifact, String(exchange.protocol))
     : stored;
   const stream = projection?.stream_events;
@@ -258,7 +260,7 @@ function ProjectionBody({ exchange, tab, body, artifact, live }: { exchange: Exc
   );
 }
 
-function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies, bodyLoading, onDownloadBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "loadedBodies" | "bodyLoading" | "onDownloadBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
+function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies, bodyLoading, bodyLoadErrorArtifactId, onDownloadBody, onRetryBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "loadedBodies" | "bodyLoading" | "bodyLoadErrorArtifactId" | "onDownloadBody" | "onRetryBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
   if (!exchange) return null;
   const refs = allArtifacts(exchange);
   const preferred = artifactForTab(exchange, activeTab, selectedArtifactId);
@@ -275,7 +277,8 @@ function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies,
         {refs.map((artifact) => <option value={artifact.artifact_id} key={artifact.artifact_id}>{artifact.stage} · {artifact.size.toLocaleString()} B{artifact.complete ? "" : " · incomplete"}</option>)}
       </select>
       {preferred && <>
-        <span className="artifact-load-status">{bodyLoading ? "Loading…" : loadedBodies[preferred.artifact_id] ? "Loaded" : "Waiting…"}</span>
+        <span className="artifact-load-status">{bodyLoading ? "Loading…" : bodyLoadErrorArtifactId === preferred.artifact_id ? "Failed" : loadedBodies[preferred.artifact_id] ? "Loaded" : "Waiting…"}</span>
+        {bodyLoadErrorArtifactId === preferred.artifact_id && <button type="button" className="button quiet" onClick={() => onRetryBody(preferred)} disabled={bodyLoading}>Retry</button>}
         <button type="button" className="button quiet" onClick={() => onDownloadBody(preferred)} disabled={bodyLoading} aria-label={`Download ${preferred.artifact_id}`}>Download</button>
       </>}
     </div>
@@ -320,9 +323,11 @@ export function ExchangeDetail({
   onTabChange,
   loadedBodies,
   bodyLoading,
+  bodyLoadErrorArtifactId,
   search,
   onSearchChange,
   onLoadBody,
+  onRetryBody,
   onDownloadBody,
   onCommand,
   commandBusy,
@@ -416,9 +421,9 @@ export function ExchangeDetail({
         const response = responseArtifact(turn);
         return {
           exchange: turn,
-          requestBody: bodyFor(request, loadedBodies),
+          requestBody: request && loadedBodies[request.artifact_id]?.complete ? loadedBodies[request.artifact_id]?.text : undefined,
           responseIsSse: response?.content_type.includes("event-stream") ?? false,
-          responseBody: bodyFor(response, loadedBodies),
+          responseBody: response && loadedBodies[response.artifact_id]?.complete ? loadedBodies[response.artifact_id]?.text : undefined,
         };
       }),
       liveStream,
@@ -426,26 +431,31 @@ export function ExchangeDetail({
     );
   }, [exchange, sessionLineage, loadedBodies, liveStream]);
 
+  // Bound automatic lineage hydration; older turns remain available through
+  // server projections but are not fetched implicitly in the browser.
+  const [lineageLimit, setLineageLimit] = useState(8);
+  const visibleLineage = useMemo(() => sessionLineage?.slice(-lineageLimit), [sessionLineage, lineageLimit]);
+
   useEffect(() => {
     // Split view renders the Chat Template pane regardless of the active
     // tab, so the lineage loader must run whenever the session stream is
     // visible, not only on the chat_template tab.
     const chatTemplateVisible = activeTab === "chat_template" || split;
-    if (!sessionLineage || sessionLineage.length === 0 || !chatTemplateVisible) return;
+    if (!visibleLineage || visibleLineage.length === 0 || !chatTemplateVisible) return;
     if (bodyLoading) return;
-    for (const turn of sessionLineage) {
+    for (const turn of visibleLineage) {
       for (const ref of [forwardedRequestArtifact(turn), responseArtifact(turn)]) {
-        if (ref && !loadedBodies[ref.artifact_id]) {
+        if (ref && !loadedBodies[ref.artifact_id] && bodyLoadErrorArtifactId !== ref.artifact_id) {
           onLoadBody(ref);
           return;
         }
       }
     }
-  }, [activeTab, split, bodyLoading, loadedBodies, onLoadBody, sessionLineage]);
+  }, [activeTab, split, bodyLoading, bodyLoadErrorArtifactId, loadedBodies, onLoadBody, visibleLineage]);
 
   useEffect(() => {
-    if (artifact && !loadedBodies[artifact.artifact_id] && !bodyLoading) onLoadBody(artifact);
-  }, [artifact?.artifact_id, bodyLoading, loadedBodies, onLoadBody]);
+    if (artifact && !loadedBodies[artifact.artifact_id] && !bodyLoading && bodyLoadErrorArtifactId !== artifact.artifact_id) onLoadBody(artifact);
+  }, [artifact?.artifact_id, bodyLoading, bodyLoadErrorArtifactId, loadedBodies, onLoadBody]);
 
   const editorArtifact = exchange && editorMode ? actionArtifactFor(exchange, editorMode) : undefined;
   const editorBody = bodyFor(editorArtifact, loadedBodies);
@@ -544,22 +554,23 @@ export function ExchangeDetail({
           <div className="toolbar-right">
             {showViewerSearch && <label className="viewer-search"><span>Search</span><input name="search" aria-label="Search raw JSON" type="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in raw JSON" />{search && <button type="button" className="viewer-search-clear" aria-label="Clear search" onClick={() => onSearchChange("")}>×</button>}</label>}
             <LayoutToggle split={split} splitAvailable={isWide} onSelect={setSplitPref} />
-            <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
+            <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} bodyLoadErrorArtifactId={bodyLoadErrorArtifactId} onRetryBody={onRetryBody} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
           </div>
         </div>
+        {sessionLineage && sessionLineage.length > lineageLimit && <button type="button" className="button quiet" onClick={() => setLineageLimit((limit) => limit + 8)}>Load older context ({sessionLineage.length - lineageLimit} turns)</button>}
         <div className={`viewer-body ${split ? "split-mode" : ""}`} data-split-view={split ? "true" : undefined} ref={splitBodyRef}>
           {split ? (<>
             <div className="viewer-pane pane-left" style={{ flexBasis: `${Math.round(paneRatio * 100)}%` }}>
-              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} turns={mergedTurns} selectedExchangeId={exchange.exchange_id} />
+              <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} bodyComplete={artifact ? loadedBodies[artifact.artifact_id]?.complete ?? false : true} live={liveStream} turns={mergedTurns} selectedExchangeId={exchange.exchange_id} />
             </div>
             <div className="pane-divider" role="separator" aria-orientation="vertical" aria-label="Resize panes" title="Drag to resize" onMouseDown={startPaneResize} />
             <div className="viewer-pane pane-right">
-              <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />
+              <RawJsonTree rawBody={body} rawBodyComplete={artifact ? loadedBodies[artifact.artifact_id]?.complete : undefined} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />
             </div>
           </>) : (<>
-            {activeTab === "raw" && <RawJsonTree rawBody={body} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
-            {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} live={liveStream} turns={mergedTurns} selectedExchangeId={exchange.exchange_id} />}
-            {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} live={liveStream} />}
+            {activeTab === "raw" && <RawJsonTree rawBody={body} rawBodyComplete={artifact ? loadedBodies[artifact.artifact_id]?.complete : undefined} search={search} onSearchChange={onSearchChange} showControls={false} ariaLabel="Raw artifact JSON tree" />}
+            {activeTab === "chat_template" && <ChatTemplateView protocol={String(exchange.protocol)} body={body} artifact={artifact} bodyComplete={artifact ? loadedBodies[artifact.artifact_id]?.complete ?? false : true} live={liveStream} turns={mergedTurns} selectedExchangeId={exchange.exchange_id} />}
+            {activeTab === "sse" && <ProjectionBody exchange={exchange} tab={activeTab} body={body} artifact={artifact} bodyComplete={artifact ? loadedBodies[artifact.artifact_id]?.complete ?? false : true} live={liveStream} />}
           </>)}
         </div>
       </section>

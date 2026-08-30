@@ -2,15 +2,20 @@ package workspace
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
+	"time"
 
 	"context-lens/backend/exchange"
 	"context-lens/backend/wire"
 )
 
-// RegistryAdapter exposes the current exchange.Registry through the workspace
+// ErrInvalidCursor is returned when a page cursor is malformed.
+var ErrInvalidCursor = errors.New("workspace: invalid cursor")
+
 // backend seam.  The registry's public API currently supports lookup and
 // command execution on an Exchange but not enumeration or event publication;
 // Track records ids created by the caller so ListExchanges can still provide a
@@ -109,7 +114,63 @@ func (a *RegistryAdapter) ListExchanges() ([]exchange.Snapshot, error) {
 	return out, nil
 }
 
-// GetExchange looks up and snapshots one exchange.  Successful lookups are
+// ListExchangesPage provides deterministic pagination for ephemeral registries.
+// NOTE: the legacy registry has no iterator, so this fallback necessarily
+// snapshots its full map before slicing; durable Gateway backends are bounded.
+func (a *RegistryAdapter) ListExchangesPage(ctx context.Context, limit int, cursor string) ([]exchange.Snapshot, string, error) {
+	if err := contextErr(ctx); err != nil {
+		return nil, "", err
+	}
+	all, err := a.ListExchanges()
+	if err != nil {
+		return nil, "", err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	createdAt := time.Time{}
+	cursorID := ""
+	if cursor != "" {
+		decoded, e := base64.RawURLEncoding.DecodeString(cursor)
+		if e != nil {
+			return nil, "", ErrInvalidCursor
+		}
+		parts := strings.SplitN(string(decoded), "|", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, "", ErrInvalidCursor
+		}
+		createdAt, e = time.Parse(time.RFC3339Nano, parts[0])
+		if e != nil {
+			return nil, "", ErrInvalidCursor
+		}
+		cursorID = parts[1]
+	}
+	start := 0
+	for start < len(all) && (all[start].CreatedAt.Before(createdAt) || (all[start].CreatedAt.Equal(createdAt) && all[start].ExchangeID <= cursorID)) {
+		start++
+	}
+	if cursor == "" {
+		start = 0
+	}
+	if start >= len(all) {
+		return []exchange.Snapshot{}, "", nil
+	}
+	end := start + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	next := ""
+	if end < len(all) {
+		last := all[end-1]
+		next = base64.RawURLEncoding.EncodeToString([]byte(last.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + last.ExchangeID))
+	}
+	return all[start:end], next, nil
+}
+
+// GetExchange looks up and snapshots one exchange. Successful lookups are
 // automatically tracked, making a direct detail request populate subsequent
 // list results even when the producer did not explicitly call Track.
 func (a *RegistryAdapter) GetExchange(exchangeID string) (exchange.Snapshot, error) {

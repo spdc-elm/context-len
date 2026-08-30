@@ -4,7 +4,6 @@ interface WorkspaceTopbarProps {
   policy: WorkspacePolicy;
   exchangeCount: number;
   heldCount: number;
-  loadedCount: number;
   theme: "light" | "dark";
   onGateChange: (gate: "request_gate" | "response_gate", value: GateMode) => void;
   onThemeToggle: () => void;
@@ -46,7 +45,6 @@ export function WorkspaceTopbar({
   policy,
   exchangeCount,
   heldCount,
-  loadedCount,
   theme,
   onGateChange,
   onThemeToggle,
@@ -82,7 +80,6 @@ export function WorkspaceTopbar({
           <span>{exchangeCount} exchanges</span>
           <span className="status-divider" />
           <span>{heldCount} held</span>
-          {loadedCount > 0 && <><span className="status-divider" /><span>{loadedCount} loaded</span></>}
         </div>
         <button
           type="button"

@@ -149,6 +149,14 @@ describe("RawJsonTree", () => {
     expect(rendered.querySelector('[data-json-tree-view="true"]')).toBeNull();
   });
 
+  it("does not parse a bounded preview as complete JSON", () => {
+    const rendered = renderTree({ rawBody: '{"messages":[{"role":"user","content":"truncated', rawBodyComplete: false });
+    const fallback = rendered.querySelector('[data-raw-json-fallback="partial"]');
+    expect(fallback).not.toBeNull();
+    expect(fallback?.textContent).toContain("Preview truncated");
+    expect(rendered.querySelector('[data-json-tree-view="true"]')).toBeNull();
+  });
+
   it("accepts a supplied node and encodes source JSON pointer tokens", () => {
     const supplied = { "a/b": { "tilde~key": "kept" } };
     const rendered = renderTree({ node: supplied, sourceJsonPointer: "/payload", initialExpandDepth: 0 });

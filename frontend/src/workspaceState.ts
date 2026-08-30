@@ -11,6 +11,7 @@ import {
 } from "./sessionTree";
 import {
   applyStreamRecord,
+  applyStreamRecords,
   applyStreamTerminus,
   initialLiveStream,
   type LiveStreamState,
@@ -21,6 +22,8 @@ export type DetailTab = "raw" | "chat_template" | "sse";
 export interface LoadedArtifact {
   artifactId: string;
   text: string;
+  /** Exact bytes retained by the browser cache (UTF-8 text length is not exact). */
+  byteLength?: number;
   start: number;
   end: number;
   totalSize: number;
@@ -38,6 +41,7 @@ export interface WorkspaceState {
   loading: boolean;
   error?: string;
   bodyLoading: boolean;
+  bodyLoadErrorArtifactId?: string;
   loadedBodies: Record<string, LoadedArtifact>;
   search: string;
   streams: Record<string, LiveStreamState>;
@@ -46,6 +50,7 @@ export interface WorkspaceState {
 export type WorkspaceAction =
   | { type: "load_started" }
   | { type: "load_succeeded"; exchanges: ExchangeSnapshot[]; policy: WorkspacePolicy }
+  | { type: "page_loaded"; exchanges: ExchangeSnapshot[] }
   | { type: "load_failed"; error: string }
   | { type: "clear_error" }
   | { type: "select_exchange"; exchangeId: string; followSessionId?: string }
@@ -53,10 +58,13 @@ export type WorkspaceAction =
   | { type: "set_policy"; gate: "request_gate" | "response_gate"; value: GateMode }
   | { type: "policy_saved"; policy: WorkspacePolicy }
   | { type: "event_received"; event: ExchangeEvent }
+  | { type: "stream_events_received"; events: ExchangeEvent[] }
   | { type: "command_succeeded"; result: CommandResult }
-  | { type: "body_load_started" }
+  | { type: "exchanges_cleared" }
+  | { type: "body_load_started"; artifactId?: string }
+  | { type: "body_load_finished" }
   | { type: "body_loaded"; body: LoadedArtifact }
-  | { type: "body_load_failed"; error: string }
+  | { type: "body_load_failed"; error: string; artifactId?: string }
   | { type: "set_search"; value: string };
 
 export const initialWorkspaceState: WorkspaceState = {
@@ -84,6 +92,24 @@ function followLatestSession(state: WorkspaceState): WorkspaceState {
   return { ...state, selectedExchangeId: latest, loadedBodies: {}, search: "" };
 }
 
+function loadedBodyBytes(item: LoadedArtifact): number {
+  return item.byteLength ?? new TextEncoder().encode(item.text).byteLength;
+}
+
+function boundedLoadedBodies(current: Record<string, LoadedArtifact>, added: LoadedArtifact): Record<string, LoadedArtifact> {
+  // Delete before re-inserting so replacing an entry also refreshes its LRU
+  // position. Object property order is the reducer's compact recency list.
+  const next = { ...current };
+  delete next[added.artifactId];
+  next[added.artifactId] = added;
+  let total = Object.values(next).reduce((sum, item) => sum + loadedBodyBytes(item), 0);
+  for (const id of Object.keys(next)) {
+    if (total <= 32 << 20 || id === added.artifactId) break;
+    total -= loadedBodyBytes(next[id]);
+    delete next[id];
+  }
+  return next;
+}
 function revisionValue(exchange: ExchangeSnapshot): number {
   return typeof exchange.revision === "number" && Number.isFinite(exchange.revision) ? exchange.revision : 0;
 }
@@ -191,13 +217,23 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
     case "load_started":
       return { ...state, loading: true, error: undefined };
     case "load_succeeded": {
-      const exchanges = action.exchanges.map(normalizeSnapshot);
-      const revisions = Object.fromEntries(exchanges.map((exchange) => [exchange.exchange_id, revisionValue(exchange)]));
+      const byId = new Map(state.exchanges.map((item) => [item.exchange_id, item]));
+      const revisions = { ...state.revisions };
+      for (const raw of action.exchanges) {
+        const exchange = normalizeSnapshot(raw);
+        const incomingRevision = revisionValue(exchange);
+        const currentRevision = revisions[exchange.exchange_id] ?? -1;
+        if (!byId.has(exchange.exchange_id) || incomingRevision >= currentRevision) {
+          byId.set(exchange.exchange_id, exchange);
+          revisions[exchange.exchange_id] = incomingRevision;
+        }
+      }
+      const exchanges = [...byId.values()];
       const next = {
         ...state,
         exchanges,
         revisions,
-        selectedExchangeId: state.selectedExchangeId && action.exchanges.some((item) => item.exchange_id === state.selectedExchangeId)
+        selectedExchangeId: state.selectedExchangeId && exchanges.some((item) => item.exchange_id === state.selectedExchangeId)
           ? state.selectedExchangeId
           : exchanges[0]?.exchange_id,
         policy: action.policy,
@@ -206,12 +242,27 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
       return followLatestSession(next);
     }
+    case "page_loaded": {
+      const byId = new Map(state.exchanges.map((item) => [item.exchange_id, item]));
+      const revisions = { ...state.revisions };
+      for (const raw of action.exchanges) {
+        const exchange = normalizeSnapshot(raw);
+        const incomingRevision = revisionValue(exchange);
+        const currentRevision = revisions[exchange.exchange_id] ?? -1;
+        // A delayed page response must never roll back a newer realtime event.
+        if (!byId.has(exchange.exchange_id) || incomingRevision >= currentRevision) {
+          byId.set(exchange.exchange_id, exchange);
+          revisions[exchange.exchange_id] = incomingRevision;
+        }
+      }
+      return followLatestSession({ ...state, exchanges: [...byId.values()], revisions, loading: false });
+    }
     case "load_failed":
       return { ...state, loading: false, error: action.error };
     case "clear_error":
       return { ...state, error: undefined };
     case "select_exchange":
-      return { ...state, selectedExchangeId: action.exchangeId, followSessionId: action.followSessionId, loadedBodies: {}, search: "" };
+      return { ...state, selectedExchangeId: action.exchangeId, followSessionId: action.followSessionId, bodyLoading: false, bodyLoadErrorArtifactId: undefined, loadedBodies: {}, search: "" };
     case "set_tab":
       return { ...state, activeTab: action.tab };
     case "set_policy":
@@ -244,18 +295,54 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       const upserted = upsertExchange(state, { ...merged, revision: event.revision }, event.revision);
       return observeStreamTerminus(upserted, event);
     }
+    case "stream_events_received": {
+      const grouped = new Map<string, ExchangeEvent[]>();
+      for (const event of action.events) {
+        if (event.kind !== "stream_event" || !event.stream) continue;
+        const list = grouped.get(event.exchange_id) ?? [];
+        list.push(event);
+        grouped.set(event.exchange_id, list);
+      }
+      if (grouped.size === 0) return state;
+      const streams = { ...state.streams };
+      let changed = false;
+      for (const [exchangeId, events] of grouped) {
+        const current = state.exchanges.find((item) => item.exchange_id === exchangeId);
+        if (!current) continue;
+        const existing = streams[exchangeId] ?? initialLiveStream(current.protocol);
+        const next = applyStreamRecords(existing, events.map((event) => event.stream!));
+        if (next !== existing) { streams[exchangeId] = next; changed = true; }
+      }
+      return changed ? { ...state, streams } : state;
+    }
     case "command_succeeded": {
       const result = action.result;
       const nextSnapshot = { ...result.exchange, revision: result.revision };
       const next = upsertExchange(state, nextSnapshot, result.revision);
       return next;
     }
+    case "exchanges_cleared":
+      return {
+        ...state,
+        exchanges: [],
+        revisions: {},
+        selectedExchangeId: undefined,
+        followSessionId: undefined,
+        bodyLoading: false,
+        bodyLoadErrorArtifactId: undefined,
+        loadedBodies: {},
+        search: "",
+        streams: {},
+        error: undefined,
+      };
     case "body_load_started":
-      return { ...state, bodyLoading: true, error: undefined };
+      return { ...state, bodyLoading: true, bodyLoadErrorArtifactId: undefined, error: undefined };
+    case "body_load_finished":
+      return { ...state, bodyLoading: false };
     case "body_loaded":
-      return { ...state, bodyLoading: false, loadedBodies: { ...state.loadedBodies, [action.body.artifactId]: action.body }, error: undefined };
+      return { ...state, bodyLoading: false, bodyLoadErrorArtifactId: undefined, loadedBodies: boundedLoadedBodies(state.loadedBodies, action.body), error: undefined };
     case "body_load_failed":
-      return { ...state, bodyLoading: false, error: action.error };
+      return { ...state, bodyLoading: false, bodyLoadErrorArtifactId: action.artifactId, error: action.error };
     case "set_search":
       return { ...state, search: action.value };
   }

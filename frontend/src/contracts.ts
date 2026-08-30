@@ -306,13 +306,22 @@ export interface WorkspacePolicy {
   response_gate: GateMode;
 }
 
+export interface ExchangePage {
+  exchanges: ExchangeSnapshot[];
+  next_cursor?: string;
+  has_more?: boolean;
+}
+
 export interface WorkspaceApi {
   listExchanges(signal?: AbortSignal): Promise<ExchangeSnapshot[]>;
+  /** Optional bounded page API; older injected APIs may omit this method. */
+  listExchangesPage?(limit: number, cursor?: string, signal?: AbortSignal): Promise<ExchangePage>;
   getExchange(exchangeId: string, signal?: AbortSignal): Promise<ExchangeSnapshot>;
   readArtifact(request: ArtifactReadRequest, signal?: AbortSignal): Promise<ArtifactBody>;
   command(command: WorkspaceCommand, signal?: AbortSignal): Promise<CommandResult>;
   getPolicy(signal?: AbortSignal): Promise<WorkspacePolicy>;
   setPolicy(policy: WorkspacePolicy, signal?: AbortSignal): Promise<WorkspacePolicy>;
+  clearExchanges(signal?: AbortSignal): Promise<void>;
   subscribe(listener: (event: ExchangeEvent) => void): () => void;
 }
 

@@ -7,6 +7,9 @@ export type RawJsonValue = unknown;
 export interface RawJsonTreeProps {
   /** Raw request/response bytes. JSON is parsed for display only. */
   rawBody?: string | null;
+  /** Whether rawBody contains the complete artifact. Partial previews are
+   * displayed as text and are never passed through JSON.parse. */
+  rawBodyComplete?: boolean;
   /** Alias for rawBody, useful when the artifact is called body by a caller. */
   body?: string | null;
   /** A pre-parsed value. When present it takes precedence over rawBody/body. */
@@ -54,7 +57,7 @@ interface TreeNode {
 }
 
 interface ParsedInput {
-  kind: "json" | "text" | "empty";
+  kind: "json" | "text" | "partial" | "empty";
   value?: RawJsonValue;
   rawText?: string;
   error?: string;
@@ -270,6 +273,7 @@ function parseInput(props: RawJsonTreeProps): ParsedInput {
   if (hasNode) return { kind: "json", value: props.node !== undefined ? props.node : props.value, rootPointer };
   const rawText = props.rawBody !== undefined ? props.rawBody : props.body;
   if (rawText === undefined || rawText === null) return { kind: "empty", rootPointer };
+  if (props.rawBodyComplete === false) return { kind: "partial", rawText, rootPointer };
   try {
     return { kind: "json", value: JSON.parse(rawText) as RawJsonValue, rawText, rootPointer };
   } catch (error) {
@@ -385,11 +389,11 @@ function highlightedText(text: string, query: string, keyBase: string): ReactNod
     : <span key={`${keyBase}-${index}`}>{part}</span>);
 }
 
-function PlainTextFallback({ text, query }: { text: string; query: string }) {
+function PlainTextFallback({ text, query, partial = false }: { text: string; query: string; partial?: boolean }) {
   return (
-    <div className="raw-json-tree-fallback" data-raw-json-fallback="text">
-      <div className="raw-json-tree-fallback-note">Plain text · JSON parse failed; showing the immutable body unchanged.</div>
-      <pre aria-label="Raw text fallback">{highlightedText(text, query, "fallback")}</pre>
+    <div className="raw-json-tree-fallback" data-raw-json-fallback={partial ? "partial" : "text"}>
+      <div className="raw-json-tree-fallback-note">{partial ? "Preview truncated · load or download the complete artifact before using the JSON tree." : "Plain text · JSON parse failed; showing the immutable body unchanged."}</div>
+      <pre aria-label={partial ? "Artifact preview" : "Raw text fallback"}>{highlightedText(text, query, "fallback")}</pre>
     </div>
   );
 }
@@ -473,6 +477,7 @@ function normalizeDepth(value: number): number {
  */
 export function RawJsonTree({
   rawBody,
+  rawBodyComplete,
   body,
   node,
   value,
@@ -489,7 +494,7 @@ export function RawJsonTree({
   ariaLabel = "Raw JSON tree",
   showControls = true,
 }: RawJsonTreeProps) {
-  const parsed = useMemo(() => parseInput({ rawBody, body, node, value, sourceJsonPointer, sourcePointer, jsonPointer }), [rawBody, body, node, value, sourceJsonPointer, sourcePointer, jsonPointer]);
+  const parsed = useMemo(() => parseInput({ rawBody, rawBodyComplete, body, node, value, sourceJsonPointer, sourcePointer, jsonPointer }), [rawBody, rawBodyComplete, body, node, value, sourceJsonPointer, sourcePointer, jsonPointer]);
   const configuredDepth = autoExpandDepth ?? initialExpandDepth ?? depth;
   const [expandDepth, setExpandDepth] = useState(() => normalizeDepth(configuredDepth ?? DEFAULT_EXPAND_DEPTH));
   const [internalSearch, setInternalSearch] = useState("");
@@ -560,7 +565,7 @@ export function RawJsonTree({
         </div>
       )}
       {parsed.kind === "empty" && <div className="raw-json-tree-empty">Select an artifact to inspect its raw body.</div>}
-      {parsed.kind === "text" && parsed.rawText !== undefined && <PlainTextFallback text={parsed.rawText} query={query} />}
+      {(parsed.kind === "text" || parsed.kind === "partial") && parsed.rawText !== undefined && <PlainTextFallback text={parsed.rawText} query={query} partial={parsed.kind === "partial"} />}
       {parsed.kind === "json" && root && (
         <div className="raw-json-tree-view" role="tree" aria-label="JSON value tree" data-json-tree-view="true">
           <TreeNodeView node={root} query={query} matches={searchState.matches} autoExpanded={searchState.autoExpanded} overrides={overrides} onToggle={handleToggle} />

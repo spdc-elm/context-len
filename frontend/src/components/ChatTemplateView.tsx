@@ -19,6 +19,8 @@ interface ChatTemplateViewProps {
   protocol: string;
   body?: string;
   artifact?: ArtifactRef;
+  /** Whether body contains the full artifact rather than a bounded preview. */
+  bodyComplete?: boolean;
   /** Live response stream while the SSE body is still flowing. */
   live?: LiveStreamState;
   /** Merged session lineage; when present the session scope renders it. */
@@ -481,7 +483,7 @@ function TurnBoundary({ turn, isLast, streaming }: { turn: MergedTurn; isLast: b
   );
 }
 
-export function ChatTemplateView({ protocol, body, artifact, live, turns, selectedExchangeId }: ChatTemplateViewProps) {
+export function ChatTemplateView({ protocol, body, artifact, bodyComplete = true, live, turns, selectedExchangeId }: ChatTemplateViewProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [scope, setScope] = useState<"session" | "request">("session");
   // Unknown passthrough blocks stay hidden by default: they are noise from
@@ -493,15 +495,15 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
   const scrollParentRef = useRef<HTMLElement | null>(null);
   const followLatestRef = useRef(true);
   const autoScrollingRef = useRef(false);
-  const document = useMemo(() => normalizeContext(protocol, body ?? ""), [protocol, body]);
+  const document = useMemo(() => bodyComplete ? normalizeContext(protocol, body ?? "") : undefined, [protocol, body, bodyComplete]);
   const isSse =
     artifact?.content_type.includes("event-stream") || /^\s*(?:event|data|id|retry):/m.test(body ?? "");
   // A complete SSE artifact folds through the same live reducer that powers
   // realtime updates, so the finished view and the live view agree by
   // construction instead of by duplicated logic.
   const streamFromBody = useMemo(
-    () => (isSse && body !== undefined ? buildLiveStream(protocol, parseSseRecords(body)) : undefined),
-    [isSse, body, protocol],
+    () => (bodyComplete && isSse && body !== undefined ? buildLiveStream(protocol, parseSseRecords(body)) : undefined),
+    [bodyComplete, isSse, body, protocol],
   );
   const activeStream = streamFromBody ?? live;
   const useSessionScope = scope === "session" && (turns?.turns.length ?? 0) > 0;
@@ -536,6 +538,7 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
 
   const blocks = useMemo<RenderedContextBlock[]>(() => {
     if (useSessionScope) return [];
+    if (!document) return [];
     if (streamFromBody) {
       return renderQwenBlocks({ ...document, blocks: streamFromBody.blocks });
     }
@@ -561,7 +564,7 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
         return sum + context.filter((block) => block.kind === "unknown").length + response.filter((block) => block.kind === "unknown").length;
       }, 0);
     }
-    const source = streamFromBody ? streamFromBody.blocks : [...document.blocks, ...(live?.blocks ?? [])];
+    const source = streamFromBody ? streamFromBody.blocks : document ? [...document.blocks, ...(live?.blocks ?? [])] : live?.blocks ?? [];
     return source.filter((block) => block.kind === "unknown").length;
   }, [useSessionScope, turns, streamFromBody, document, live]);
 
@@ -620,6 +623,10 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
     // as a user's manual scroll.
     queueMicrotask(() => { autoScrollingRef.current = false; });
   }, [body, isSse, live?.eventCount, streamFromBody?.eventCount, segments.length, sessionSegments.length, lastStream?.eventCount]);
+
+  if (body !== undefined && !bodyComplete && !useSessionScope) {
+    return <div className="body-placeholder">Artifact preview is truncated; load or download the complete body to render ChatML.</div>;
+  }
 
   if (body === undefined && !useSessionScope) {
     return (
@@ -701,7 +708,7 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
           ) : null}
         </>}
       </div>
-      {document.warnings.length > 0 && !isSse && !useSessionScope && (
+      {document?.warnings && document.warnings.length > 0 && !isSse && !useSessionScope && (
         <div className="warning-box">
           {document.warnings.map((warning) => (
             <p key={warning}>{warning}</p>

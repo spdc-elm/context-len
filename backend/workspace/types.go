@@ -56,6 +56,13 @@ type ExchangeBackend interface {
 	Command(command exchange.Command) (exchange.CommandResult, error)
 }
 
+// PagedExchangeBackend is an optional metadata-only page seam. Cursor values are
+// opaque to the HTTP layer; implementations must return at most limit rows and
+// a non-empty cursor when more rows remain.
+type PagedExchangeBackend interface {
+	ListExchangesPage(context.Context, int, string) ([]exchange.Snapshot, string, error)
+}
+
 // ContextExchangeBackend is an optional context-aware form.  HTTP handlers use
 // it in preference to ExchangeBackend's context-free methods when available,
 // so a backend can stop expensive persistence work when a browser disconnects.
@@ -108,6 +115,13 @@ type ArtifactStore interface {
 	Get(context.Context, string) (wire.BodyArtifact, error)
 }
 
+// ArtifactMetadataStore is an optional metadata-only extension. It lets HEAD
+// requests and range planning avoid materialising the artifact body. Metadata
+// must describe the immutable stored bytes and must not return body content.
+type ArtifactMetadataStore interface {
+	ArtifactRef(context.Context, string) (wire.ArtifactRef, error)
+}
+
 // RangeArtifactStore is an optional extension used to avoid loading a whole
 // blob for range reads and searches.  End offsets are exclusive.  Ref must
 // return metadata without body bytes; ReadRange must return exact bytes for
@@ -118,12 +132,23 @@ type RangeArtifactStore interface {
 	Search(context.Context, string, []byte, int) ([]ArtifactMatch, error)
 }
 
-// Config controls API routes and safety limits.
+// ArtifactErrorClassifier lets an artifact adapter expose a stable HTTP class
+// without leaking implementation error text. Implementations should return a
+// workspace error code/message, never body contents or credentials.
+type ArtifactErrorClassifier interface {
+	ArtifactHTTPError() (status int, code, message string)
+}
+
 type Config struct {
 	// Backend is preferred.  Registry is a convenience for adapting the
 	// current exchange.Registry when no backend has been supplied.
 	Backend  ExchangeBackend
 	Registry RegistryLookup
+
+	// ClearQueue performs an operator-side queue reset. It should clear
+	// exchanges, artifacts, and any derived session index while keeping the
+	// runtime usable for new traffic.
+	ClearQueue func(context.Context) error
 
 	Artifacts ArtifactStore
 	Policy    PolicyStore
@@ -144,11 +169,12 @@ type Config struct {
 
 // Server implements http.Handler for the workspace API.
 type Server struct {
-	config    Config
-	backend   ExchangeBackend
-	artifacts ArtifactStore
-	policy    PolicyStore
-	events    *EventBroker
+	config     Config
+	backend    ExchangeBackend
+	artifacts  ArtifactStore
+	policy     PolicyStore
+	clearQueue func(context.Context) error
+	events     *EventBroker
 
 	closeOnce    sync.Once
 	done         chan struct{}
@@ -181,6 +207,7 @@ func New(cfg Config) *Server {
 		backend:      backend,
 		artifacts:    cfg.Artifacts,
 		policy:       cfg.Policy,
+		clearQueue:   cfg.ClearQueue,
 		events:       NewEventBroker(cfg.EventBuffer),
 		done:         make(chan struct{}),
 		closeHandler: func() {},

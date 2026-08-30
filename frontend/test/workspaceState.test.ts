@@ -104,12 +104,31 @@ describe("workspace reducer", () => {
   it("resets body/search state when selecting another exchange", () => {
     const exchange = snapshot();
     const loaded = workspaceReducer(initialWorkspaceState, { type: "load_succeeded", exchanges: [exchange], policy: exchange.policy });
-    const withSearch: WorkspaceState = { ...loaded, search: "foo", loadedBodies: { artifact: { artifactId: "artifact", text: "{}", start: 0, end: 2, totalSize: 2, complete: true } } };
+    const withSearch: WorkspaceState = { ...loaded, bodyLoading: true, bodyLoadErrorArtifactId: "old", search: "foo", loadedBodies: { artifact: { artifactId: "artifact", text: "{}", start: 0, end: 2, totalSize: 2, complete: true } } };
     const next = workspaceReducer(withSearch, { type: "select_exchange", exchangeId: "another" });
     expect(next.search).toBe("");
     expect(next.loadedBodies).toEqual({});
+    expect(next.bodyLoading).toBe(false);
+    expect(next.bodyLoadErrorArtifactId).toBeUndefined();
   });
 
+  it("keeps a single over-budget body but evicts older bodies by exact byte length", () => {
+    const first = workspaceReducer(initialWorkspaceState, { type: "body_loaded", body: { artifactId: "a", text: "aa", byteLength: 2, start: 0, end: 2, totalSize: 2, complete: true } });
+    const next = workspaceReducer(first, { type: "body_loaded", body: { artifactId: "b", text: "bb", byteLength: (32 << 20) + 1, start: 0, end: (32 << 20) + 1, totalSize: (32 << 20) + 1, complete: true } });
+    expect(next.loadedBodies.a).toBeUndefined();
+    expect(next.loadedBodies.b?.byteLength).toBe((32 << 20) + 1);
+  });
+
+  it("refreshes LRU order when replacing an already loaded body", () => {
+    const loaded = (state: WorkspaceState, id: string) => workspaceReducer(state, { type: "body_loaded", body: { artifactId: id, text: id, byteLength: 16 << 20, start: 0, end: 16 << 20, totalSize: 16 << 20, complete: true } });
+    let state = loaded(initialWorkspaceState, "a");
+    state = loaded(state, "b");
+    state = loaded(state, "a"); // access a: b is now oldest
+    state = loaded(state, "c");
+    expect(state.loadedBodies.a).toBeDefined();
+    expect(state.loadedBodies.b).toBeUndefined();
+    expect(state.loadedBodies.c).toBeDefined();
+  });
   it("applies stream events to a live stream keyed by exchange", () => {
     const exchange = snapshot();
     const loaded = workspaceReducer(initialWorkspaceState, { type: "load_succeeded", exchanges: [exchange], policy: exchange.policy });

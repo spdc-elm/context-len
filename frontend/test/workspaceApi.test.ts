@@ -38,7 +38,7 @@ describe("local workspace API", () => {
       if (url.endsWith("/policy") && init?.method === "GET") return Response.json({ policy: exchange.policy });
       if (url.endsWith("/policy")) return Response.json(exchange.policy);
       if (url.endsWith("/command") || url.endsWith("/commands")) return Response.json({ exchange, revision: 4 });
-      return new Response(new Uint8Array([0, 1, 255]), { status: 206, headers: { "content-type": "application/octet-stream", "content-range": "bytes 2-4/8", "x-artifact-complete": "false" } });
+      return new Response(new Uint8Array([0, 1, 255]), { status: 206, headers: { "content-type": "application/octet-stream", "content-range": "bytes 2-4/8", "x-artifact-complete": "true" } });
     });
     const api = new LocalWorkspaceApi({ baseUrl: "http://127.0.0.1:3001/", fetch: fetcher });
     expect(await api.listExchanges()).toEqual([exchange]);
@@ -48,6 +48,7 @@ describe("local workspace API", () => {
     expect(body.start).toBe(2);
     expect(body.end).toBe(5);
     expect(body.total_size).toBe(8);
+    expect(body.complete).toBe(false);
     await api.command({ exchange_id: "ex-1", base_revision: 3, kind: "release_unchanged" });
     await api.setPolicy({ request_gate: "hold", response_gate: "pass" });
     expect(calls.some((call) => call.url.endsWith("/command") && call.init?.method === "POST")).toBe(true);
@@ -55,6 +56,15 @@ describe("local workspace API", () => {
     expect(commandCall?.init?.body).toContain("release_unchanged");
   });
 
+  it("reads bounded exchange pages and cursor metadata", async () => {
+    const exchange = snapshot();
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => Response.json({ items: [exchange], next_cursor: "next", has_more: true }));
+    const api = new LocalWorkspaceApi({ baseUrl: "http://127.0.0.1:3001", fetch: fetcher });
+    const page = await api.listExchangesPage!(25, "prev");
+    expect(page.exchanges).toEqual([exchange]);
+    expect(page.next_cursor).toBe("next");
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain("/api/exchanges?limit=25&cursor=prev");
+  });
   it("subscribes to WS events and closes after the last listener leaves", () => {
     let socket: FakeSocket | undefined;
     const api = new LocalWorkspaceApi({

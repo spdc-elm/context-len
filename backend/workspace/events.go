@@ -207,6 +207,18 @@ func (b *EventBroker) Snapshot() []exchange.Event {
 	return out
 }
 
+// ClearHistory forgets retained events without disconnecting current
+// subscribers. The queue reset endpoint uses this so a reconnecting browser
+// cannot replay records that no longer exist in the registry.
+func (b *EventBroker) ClearHistory() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.history = b.history[:0]
+	b.mu.Unlock()
+}
+
 // Close disconnects every subscriber and prevents future publications.
 func (b *EventBroker) Close() {
 	if b == nil {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
   ArtifactRef,
   GateMode,
@@ -6,6 +6,7 @@ import type {
   WorkspaceCommand,
 } from "./contracts";
 import { createLocalWorkspaceApi } from "./workspaceApi";
+import { ArtifactLoader } from "./artifactLoader";
 import {
   initialWorkspaceState,
   selectedExchange,
@@ -66,14 +67,26 @@ function initialTheme(): "light" | "dark" {
   }
 }
 
+const MAX_CLIENT_PARSE_BYTES = 8 << 20;
+
 export function App({ api }: AppProps) {
   // Do not default the prop parameter to the mock: production renders use the
   // local same-origin REST/WS client, while tests retain explicit injection.
   const runtimeApi = useMemo(() => api ?? createLocalWorkspaceApi(), [api]);
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
   const [commandBusy, setCommandBusy] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
+  const loader = useMemo(() => new ArtifactLoader(runtimeApi), [runtimeApi]);
+  const [pageCursor, setPageCursor] = useState<string | undefined>(undefined);
+  const [hasMoreExchanges, setHasMoreExchanges] = useState(false);
+  const [pageLoading, setPageLoading] = useState(false);
+  // Stream observations are high frequency. Keep transport callbacks cheap and
+  // commit at most one reducer update per animation frame. Every record remains
+  // in the batch; the reducer owns ordinal deduplication/gap handling.
+  const pendingStreamEvents = useRef<import("./contracts").ExchangeEvent[]>([]);
+  const streamFlushHandle = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     try {
@@ -88,58 +101,94 @@ export function App({ api }: AppProps) {
     const controller = new AbortController();
     let cancelled = false;
     dispatch({ type: "load_started" });
-    void Promise.all([runtimeApi.listExchanges(controller.signal), runtimeApi.getPolicy(controller.signal)]).then(([exchanges, policy]) => {
+    const loadPage = runtimeApi.listExchangesPage
+      ? runtimeApi.listExchangesPage(50, undefined, controller.signal).then((page) => {
+        setPageCursor(page.next_cursor); setHasMoreExchanges(page.has_more ?? Boolean(page.next_cursor)); return page.exchanges;
+      })
+      : runtimeApi.listExchanges(controller.signal).then((items) => { setHasMoreExchanges(false); return items; });
+    void Promise.all([loadPage, runtimeApi.getPolicy(controller.signal)]).then(([exchanges, policy]) => {
       if (!cancelled) dispatch({ type: "load_succeeded", exchanges, policy });
     }).catch((error: unknown) => {
       if (!cancelled && !controller.signal.aborted) dispatch({ type: "load_failed", error: error instanceof Error ? error.message : String(error) });
     });
+    const flushStreams = () => {
+      streamFlushHandle.current = undefined;
+      const pending = pendingStreamEvents.current;
+      pendingStreamEvents.current = [];
+      if (pending.length) dispatch({ type: "stream_events_received", events: pending });
+    };
+    const scheduleStreamFlush = () => {
+      if (streamFlushHandle.current !== undefined) return;
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        streamFlushHandle.current = window.requestAnimationFrame(flushStreams);
+      } else {
+        streamFlushHandle.current = window.setTimeout(flushStreams, 16);
+      }
+    };
     const unsubscribe = runtimeApi.subscribe((event) => {
-      if (!cancelled) dispatch({ type: "event_received", event });
+      if (cancelled) return;
+      if (event.kind === "stream_event" && event.stream) {
+        pendingStreamEvents.current.push(event);
+        scheduleStreamFlush();
+      } else {
+        dispatch({ type: "event_received", event });
+      }
     });
     return () => {
       cancelled = true;
       controller.abort();
       unsubscribe();
+      if (streamFlushHandle.current !== undefined) {
+        if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(streamFlushHandle.current);
+        else window.clearTimeout(streamFlushHandle.current);
+      }
+      pendingStreamEvents.current = [];
     };
   }, [runtimeApi]);
 
+  const loadMoreExchanges = useCallback(async () => {
+    if (!runtimeApi.listExchangesPage || pageLoading || !hasMoreExchanges) return;
+    setPageLoading(true);
+    try {
+      const page = await runtimeApi.listExchangesPage(50, pageCursor);
+      setPageCursor(page.next_cursor);
+      setHasMoreExchanges(page.has_more ?? Boolean(page.next_cursor));
+      dispatch({ type: "page_loaded", exchanges: page.exchanges });
+    } catch (error: unknown) {
+      dispatch({ type: "load_failed", error: error instanceof Error ? error.message : String(error) });
+    } finally { setPageLoading(false); }
+  }, [runtimeApi, pageLoading, hasMoreExchanges, pageCursor]);
+
   const exchange = selectedExchange(state);
   const lineage = useMemo(() => sessionLineage(state.exchanges, state.selectedExchangeId), [state.exchanges, state.selectedExchangeId]);
-  const loadedCount = Object.keys(state.loadedBodies).length;
   const heldCount = useMemo(() => state.exchanges.filter((item) => item.state === "request_held" || item.state === "response_held").length, [state.exchanges]);
 
-  async function loadBody(artifact: ArtifactRef) {
-    dispatch({ type: "body_load_started" });
+  const loadBody = useCallback(async (artifact: ArtifactRef) => {
+    dispatch({ type: "body_load_started", artifactId: artifact.artifact_id });
     try {
-      const body = await runtimeApi.readArtifact({ artifact_id: artifact.artifact_id, start: 0, end: 1 << 20 });
+      const body = await loader.load(artifact, { artifact_id: artifact.artifact_id, start: 0, ...(artifact.size <= MAX_CLIENT_PARSE_BYTES ? {} : { end: 1 << 20 }) });
       dispatch({ type: "body_loaded", body: {
         artifactId: body.artifact_id,
         text: new TextDecoder().decode(body.bytes),
+        byteLength: body.bytes.byteLength,
         start: body.start,
         end: body.end,
         totalSize: body.total_size,
         complete: body.complete,
       } });
     } catch (error: unknown) {
-      dispatch({ type: "body_load_failed", error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      dispatch({ type: "body_load_failed", artifactId: artifact.artifact_id, error: error instanceof Error ? error.message : String(error) });
     }
-  }
+  }, [loader]);
 
-  async function downloadBody(artifact: ArtifactRef) {
-    dispatch({ type: "body_load_started" });
+  const downloadBody = useCallback(async (artifact: ArtifactRef) => {
+    dispatch({ type: "body_load_started", artifactId: artifact.artifact_id });
     try {
       // A download always asks for the complete artifact, even when the viewer
       // only has a range loaded.  This keeps display truncation independent of
       // the bytes saved to disk.
-      const body = await runtimeApi.readArtifact({ artifact_id: artifact.artifact_id, start: 0 });
-      dispatch({ type: "body_loaded", body: {
-        artifactId: body.artifact_id,
-        text: new TextDecoder().decode(body.bytes),
-        start: body.start,
-        end: body.end,
-        totalSize: body.total_size,
-        complete: body.complete,
-      } });
+      const body = await loader.load(artifact, { artifact_id: artifact.artifact_id, start: 0 }, undefined, false);
       const blob = new Blob([new Uint8Array(body.bytes)], { type: body.content_type || artifact.content_type || "application/octet-stream" });
       if (typeof URL.createObjectURL !== "function") throw new Error("browser does not support artifact downloads");
       const objectUrl = URL.createObjectURL(blob);
@@ -150,10 +199,17 @@ export function App({ api }: AppProps) {
       anchor.click();
       // Let the navigation consume the blob before revoking it.
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      dispatch({ type: "body_load_finished" });
     } catch (error: unknown) {
-      dispatch({ type: "body_load_failed", error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      dispatch({ type: "body_load_failed", artifactId: artifact.artifact_id, error: error instanceof Error ? error.message : String(error) });
     }
-  }
+  }, [loader]);
+
+  const handleSelectExchange = useCallback((exchangeId: string, followSessionId?: string) => {
+    loader.beginGeneration();
+    dispatch({ type: "select_exchange", exchangeId, followSessionId });
+  }, [loader]);
 
   async function runCommand(intent: CommandIntent) {
     if (!exchange || commandBusy) return;
@@ -169,6 +225,23 @@ export function App({ api }: AppProps) {
       dispatch({ type: "load_failed", error: error instanceof Error ? error.message : String(error) });
     } finally {
       setCommandBusy(false);
+    }
+  }
+
+  async function clearExchanges() {
+    if (clearBusy || state.exchanges.length === 0) return;
+    if (typeof window !== "undefined" && !window.confirm("Clear all exchange records and captured artifacts?")) return;
+    setClearBusy(true);
+    try {
+      await runtimeApi.clearExchanges();
+      loader.clear();
+      setPageCursor(undefined);
+      setHasMoreExchanges(false);
+      dispatch({ type: "exchanges_cleared" });
+    } catch (error: unknown) {
+      dispatch({ type: "load_failed", error: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setClearBusy(false);
     }
   }
 
@@ -190,7 +263,6 @@ export function App({ api }: AppProps) {
         policy={state.policy}
         exchangeCount={state.exchanges.length}
         heldCount={heldCount}
-        loadedCount={loadedCount}
         theme={theme}
         onGateChange={(gate, value) => void changeGate(gate, value)}
         onThemeToggle={() => setTheme((current) => current === "dark" ? "light" : "dark")}
@@ -199,10 +271,15 @@ export function App({ api }: AppProps) {
       <div className={`workspace-grid ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
         <TrafficQueue
           exchanges={state.exchanges}
+          hasMore={hasMoreExchanges}
+          loadingMore={pageLoading}
+          onLoadMore={() => void loadMoreExchanges()}
           selectedExchangeId={state.selectedExchangeId}
           collapsed={sidebarCollapsed}
           onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
-          onSelect={(exchangeId, followSessionId) => dispatch({ type: "select_exchange", exchangeId, followSessionId })}
+          onClear={() => void clearExchanges()}
+          clearBusy={clearBusy}
+          onSelect={handleSelectExchange}
         />
         <ExchangeDetail
           exchange={exchange}
@@ -212,9 +289,11 @@ export function App({ api }: AppProps) {
           onTabChange={(tab: DetailTab) => dispatch({ type: "set_tab", tab })}
           loadedBodies={state.loadedBodies}
           bodyLoading={state.bodyLoading}
+          bodyLoadErrorArtifactId={state.bodyLoadErrorArtifactId}
           search={state.search}
           onSearchChange={(value) => dispatch({ type: "set_search", value })}
           onLoadBody={(artifact) => void loadBody(artifact)}
+          onRetryBody={(artifact) => void loadBody(artifact)}
           onDownloadBody={(artifact) => void downloadBody(artifact)}
           onCommand={(intent) => void runCommand(intent)}
           commandBusy={commandBusy}

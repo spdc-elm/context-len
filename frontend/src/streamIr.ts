@@ -38,12 +38,14 @@ export interface LiveStreamState {
   blocks: ContextBlock[];
   events: LiveStreamEventLog[];
   eventCount: number;
+  /** Records that arrived ahead of a missing ordinal; drained when the gap closes. */
+  pendingRecords?: StreamEventRecord[];
 }
 
 const MAX_EVENT_LOG = 400;
 
 export function initialLiveStream(protocol: ContextProtocol): LiveStreamState {
-  return { protocol, status: "streaming", nextOrdinal: 0, blocks: [], events: [], eventCount: 0 };
+  return { protocol, status: "streaming", nextOrdinal: 0, blocks: [], events: [], eventCount: 0, pendingRecords: [] };
 }
 
 type StreamDelta =
@@ -378,9 +380,17 @@ function applyDelta(state: LiveStreamState, delta: StreamDelta, ordinal: number)
       }));
       const next = delta.replace !== undefined ? delta.replace : (block.rawArguments ?? "") + delta.append;
       block.rawArguments = next;
-      try {
-        block.arguments = JSON.parse(next) as unknown;
-      } catch {
+      // Tiny streaming fragments are intentionally kept raw. Parsing only when
+      // a structural terminator arrives avoids repeated JSON work per delta;
+      // the final `.done`/replacement path always parses.
+      const candidate = next.trim();
+      if (delta.replace !== undefined || candidate.endsWith("}") || candidate.endsWith("]")) {
+        try {
+          block.arguments = JSON.parse(next) as unknown;
+        } catch {
+          block.arguments = next;
+        }
+      } else {
         block.arguments = next;
       }
       return;
@@ -422,22 +432,44 @@ function deltasForRecord(protocol: ContextProtocol, record: StreamEventRecord): 
   return [{ kind: "passthrough", record }];
 }
 
-/** Fold one observed SSE record into the live state.  Records are deduplicated
- * by ordinal, so broker replay and Last-Event-ID reconnect stay idempotent. */
+/** Fold one observed SSE record into the live state. Records are deduplicated
+ * by ordinal. Ahead-of-order records are retained in a bounded gap queue and
+ * drained once the missing ordinal arrives. */
 export function applyStreamRecord(state: LiveStreamState, record: StreamEventRecord): LiveStreamState {
   if (record.ordinal < state.nextOrdinal) return state;
+  if (record.ordinal > state.nextOrdinal) {
+    const pending = [...(state.pendingRecords ?? [])];
+    if (!pending.some((item) => item.ordinal === record.ordinal)) pending.push(record);
+    pending.sort((a, b) => a.ordinal - b.ordinal);
+    return { ...state, pendingRecords: pending.slice(0, MAX_EVENT_LOG) };
+  }
+  let next = applyContiguousRecord(state, record);
+  while (next.pendingRecords?.length && next.pendingRecords[0].ordinal === next.nextOrdinal) {
+    const [queued, ...rest] = next.pendingRecords;
+    next = applyContiguousRecord({ ...next, pendingRecords: rest }, queued);
+  }
+  return next;
+}
+
+function applyContiguousRecord(state: LiveStreamState, record: StreamEventRecord): LiveStreamState {
   const next: LiveStreamState = {
     ...state,
     blocks: state.blocks.map((block) => ({ ...block })),
     events: state.events,
+    pendingRecords: state.pendingRecords ?? [],
   };
   const log = [...next.events, { ordinal: record.ordinal, name: record.name, data: record.data }];
   next.events = log.length > MAX_EVENT_LOG ? log.slice(log.length - MAX_EVENT_LOG) : log;
   next.eventCount = state.eventCount + 1;
   next.nextOrdinal = record.ordinal + 1;
-  for (const delta of deltasForRecord(next.protocol, record)) {
-    applyDelta(next, delta, record.ordinal);
-  }
+  for (const delta of deltasForRecord(next.protocol, record)) applyDelta(next, delta, record.ordinal);
+  return next;
+}
+
+/** Fold a batch of records, retaining ordinal and duplicate semantics. */
+export function applyStreamRecords(state: LiveStreamState, records: StreamEventRecord[]): LiveStreamState {
+  let next = state;
+  for (const record of records) next = applyStreamRecord(next, record);
   return next;
 }
 

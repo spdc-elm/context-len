@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { type StreamEventRecord } from "../src/contracts";
 import {
   applyStreamRecord,
+  applyStreamRecords,
   applyStreamTerminus,
   buildLiveStream,
   initialLiveStream,
@@ -39,6 +40,18 @@ describe("parseSseRecords", () => {
 });
 
 describe("responses stream deltas", () => {
+  it("retains an out-of-order gap and drains it in ordinal order", () => {
+    let state = initialLiveStream("chat_completions");
+    const later = { ordinal: 1, data: JSON.stringify({ choices: [{ index: 0, delta: { content: " later" } }] }) };
+    state = applyStreamRecord(state, later);
+    expect(state.eventCount).toBe(0);
+    state = applyStreamRecords(state, [{ ordinal: 0, data: JSON.stringify({ choices: [{ index: 0, delta: { content: "first" } }] }) }]);
+    expect(state.eventCount).toBe(2);
+    expect(state.nextOrdinal).toBe(2);
+    expect(state.blocks[0].text).toBe("first later");
+  });
+
+
   const state = feed("responses", recordsFromFixture("responses/sse/response.sse"));
 
   it("accumulates assistant text from output_text deltas", () => {

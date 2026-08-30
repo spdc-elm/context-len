@@ -9,7 +9,12 @@ interface TrafficQueueProps {
   selectedExchangeId?: string;
   collapsed?: boolean;
   onToggle?: () => void;
+  onClear?: () => void;
+  clearBusy?: boolean;
   onSelect: (exchangeId: string, followSessionId?: string) => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 type QueueView = "sessions" | "exchanges";
@@ -70,7 +75,7 @@ function uniqueOption(values: string[]): string[] {
   return [...new Set(values.filter((value) => value !== ""))].sort((left, right) => left.localeCompare(right));
 }
 
-export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false, onToggle, onSelect }: TrafficQueueProps) {
+export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false, onToggle, onClear, clearBusy = false, onSelect, hasMore = false, loadingMore = false, onLoadMore }: TrafficQueueProps) {
   const [filters, setFilters] = useState<FilterState>(NO_FILTERS);
   const [view, setView] = useState<QueueView>("sessions");
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
@@ -126,7 +131,23 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
           <p className="eyebrow">LIVE TRAFFIC</p>
           <h2>Exchange queue</h2>
         </div>}
-        <button type="button" className="collapse-button" aria-label={collapsed ? "Expand traffic" : "Collapse traffic"} onClick={onToggle}>{collapsed ? "›" : "‹"}</button>
+        {!collapsed && <div className="panel-heading-actions">
+          {onClear && <button
+            type="button"
+            className="clear-queue-button"
+            aria-label="Clear exchange queue"
+            title="Clear exchange queue"
+            disabled={clearBusy || exchanges.length === 0}
+            onClick={onClear}
+          >
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+              <path d="M5 5.25 3.9 13h8.2L11 5.25M2.5 5.25h11M6.25 3.25h3.5l.7 2H5.55l.7-2Z" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="m6.25 7.2.35 4.1m3.15-4.1-.35 4.1" fill="none" stroke="currentColor" strokeWidth=".9" strokeLinecap="round" />
+            </svg>
+          </button>}
+          <button type="button" className="collapse-button" aria-label="Collapse traffic" onClick={onToggle}>‹</button>
+        </div>}
+        {collapsed && <button type="button" className="collapse-button" aria-label="Expand traffic" onClick={onToggle}>›</button>}
       </div>
       {!collapsed && <>
         <p className="panel-note">Live local workspace · events in realtime; bodies load on demand</p>
@@ -259,7 +280,13 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
             />
           ))
         )}
-      </div></>}
+      </div>
+      {hasMore && !collapsed && (
+        <button type="button" className="button quiet traffic-load-more" onClick={onLoadMore} disabled={loadingMore}>
+          {loadingMore ? "Loading…" : "Load more exchanges"}
+        </button>
+      )}
+      </>}
     </aside>
   );
 }
