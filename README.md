@@ -2,7 +2,7 @@
 
 `context-lens` 是一个独立的 LLM 请求观察与拦截工作台。它以 HTTP 应用层 wire 数据为权威来源，把 Responses、Chat Completions、Anthropic Messages 请求和响应以原协议转发，同时提供人类可读的旁路解析视图，以及可审计的人工放行、人工回复和响应编辑。
 
-当前状态：透明代理核心 MVP 已完成；Chat Template MVP 的 Raw + Chat Template（含宽屏分栏）与 SSE 实时观察（typed stream_event、live Chat Template、SSE tab 实时事件）均已实现。产品契约与设计规范见 [`docs/chat-template-spec.md`](docs/chat-template-spec.md)、[`docs/protocol-contract.md`](docs/protocol-contract.md) 和 [`docs/runtime-contract.md`](docs/runtime-contract.md)；session 重建与观察面板的设计见 [`docs/session-spec.md`](docs/session-spec.md)（待实现）。
+当前状态：透明代理核心 MVP 已完成；Chat Template MVP 的 Raw + Chat Template（含宽屏分栏）与 SSE 实时观察（typed stream_event、live Chat Template、SSE tab 实时事件）均已实现。产品契约与设计规范见 [`docs/chat-template-spec.md`](docs/chat-template-spec.md)、[`docs/protocol-contract.md`](docs/protocol-contract.md) 和 [`docs/runtime-contract.md`](docs/runtime-contract.md)；session 重建与观察面板的设计见 [`docs/session-spec.md`](docs/session-spec.md)，当前 session 投影、合并视图与 bounded artifact renderer 均已落地。
 
 ## 必读文档
 
@@ -10,6 +10,8 @@
 2. [`docs/chat-template-spec.md`](docs/chat-template-spec.md)：Raw Tree、Qwen ChatML、Context IR 和 SSE 观察设计
 3. [`docs/runtime-contract.md`](docs/runtime-contract.md)：backend 与 workspace UI 的运行时接缝
 4. [`docs/session-spec.md`](docs/session-spec.md)：session 重建、fork/rollout 检测、队列面板与合并视图设计（已实现）
+
+运行时默认是 ephemeral。启用可选 durable-local 模式时，设置 `CONTEXT_LENS_DURABLE=1`；数据目录默认 `.context-lens-run`，可通过 `CONTEXT_LENS_DATA_DIR` 覆盖。该模式使用 SQLite WAL 保存 sessions/exchanges/artifact refs 等 metadata，并在私有数据目录保存 content-addressed 文件 blobs；raw request/response body bytes 不进入 SQLite。未启用 durable 时，重启不会恢复内存 workspace。
 
 ## 本地运行
 

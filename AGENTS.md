@@ -1,8 +1,11 @@
 # AGENTS.md
 
-## Project purpose
+## Subagent delegation defaults
 
-`context-lens` is a local HTTP LLM request workbench and same-protocol proxy for Responses, Chat Completions, and Anthropic Messages. It observes derived projections while keeping exact application-layer body bytes as the wire authority.
+When delegation is useful, use `agent_type: worker`, model `gpt-5.6-luna`, and `reasoning_effort: max` by default. Only inherit the current session model when the task genuinely needs stronger reasoning than that worker profile; keep delegated tasks read-only unless an explicit implementation task is assigned.
+
+## Project purpose
+ and same-protocol proxy for Responses, Chat Completions, and Anthropic Messages. It observes derived projections while keeping exact application-layer body bytes as the wire authority.
 
 ## Read first
 

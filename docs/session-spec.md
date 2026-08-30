@@ -16,7 +16,7 @@
 - 不做跨协议合并；session 匹配只在同 protocol 内进行。
 - 不改变 wire/artifact authority；本 spec 全部为观察侧 additive 投影，不进入转发路径。
 - 不内置 tokenizer、不估算 token 数。
-- 不做 session 数据持久化；进程内存索引随运行时数据一起存在与消失。
+- 不把原始 body 写入 SQLite；SQLite 只保存可恢复的 metadata、session/exchange 位置与 artifact/blob 关系。默认运行仍是 ephemeral，进程退出后内存索引消失；设置 `CONTEXT_LENS_DURABLE=1` 后才启用 restart-safe 的本地 catalog 与文件 artifact 恢复。session 位置会从已保存 snapshot hydration 重建，但位置索引本身不是独立远端服务。
 
 ## 2. 左侧 Exchange 队列改造
 
@@ -126,7 +126,7 @@ fork 语义：同一父 tip 的不同后继在同一 session 树上形成两条�
 
 ### 4.5 边界与生命周期
 
-- 位置索引为进程内存态，与 exchange/artifact 数据同生命周期；重启即清空，与现有存储语义一致。
+- 位置索引为进程内存态；未启用 durable 时重启即清空。启用 durable-local 时，启动从 SQLite 保存的 session/exchange metadata hydration，artifact body 仍按需读取。
 - 容量上限：位置表设全局上限，超限时按 session 活跃度 LRU 整树淘汰；被淘汰 session 的后续请求成为新根。上限可配置。
 - 同一开头的两个独立会话（相同 system + 相同首条 user）会合入同一棵树，表现为同上下文的两个分支/rollout——与 Polar 的前缀定义一致，属接受的行为。
 
@@ -169,22 +169,30 @@ req₁ 的初始上下文（inbound messages）
 | manual response / dropped | 合并视图标记该轮，无 usage |
 | 流式无 usage | ctx 显示 `—`，不估算 |
 | key 顺序漂移 | 规范化序列化消化 |
-| 位置索引 LRU 淘汰 / 重启 | 后续请求成为新根；接受 |
+| 位置索引 LRU 淘汰 | 被淘汰 session 的后续请求成为新根；接受 |
+| 未启用 durable 的重启 | 内存位置索引清空，后续请求成为新根 |
+| durable-local 重启 | 从保存的 snapshot/session metadata hydration；artifact body 仍 lazy 读取 |
 | 同开头独立会话 | 合入同一棵树为分支/rollout；接受 |
 | `previous_response_id` 会话 | 按显式 response id 链归属 |
 | gate 挂起中的请求 | 已可归属（capture 即算），session state 派生为 running |
 
-## 8. 分期与验收
+## 8. 当前实现与边界
 
-- Phase A（面板）：summary 投影（preview/model/message_count/ctx）+ 队列字段改造 + 筛选 + URL 移除。验收：三协议 fixture 行显示 preview/model/ctx；筛选生效；转发路径字节零变化；测试覆盖 summary 投影与 usage 提取（含 anthropic cache 求和）。
-- Phase B（归属）：tip 位置链索引 + fork/rollout 检测 + additive 字段 + 前端 session 分组（纯推导，无新端点）。验收：fixture 驱动的 fork/rollout/新根用例；`-race`；现有 snapshot 字段无删改。
-- Phase C（合并视图）：连续上下文流 + echo 消除 + boundary 标记 + live 尾部。验收：tool call → tool result → 下一轮回复在同一流中呈现；echo 不匹配时双显不静默；live 流式与终态一致。
+A/B/C 的 session 投影、位置链、fork/rollout、summary 与合并视图已经落地。session 位置索引仍是进程内结构；仅当启动时 `CONTEXT_LENS_DURABLE=1`，standalone `cmd/context-lens` 才会启用 durable-local，从 SQLite 保存 metadata（包括 session/exchange 关系）并以 data directory 下的文件 blob 保存 artifact，重启后再惰性 hydration。未设置该环境变量时仍是 ephemeral，重启即清空内存索引和元数据。本文不承诺自动 retention：30 分钟 inactivity Session GC 未实现且已撤回，`favorite` retention 也不是当前能力（如未来需要，须另行设计 durable `pinned/keep` 语义）。
 
-## 9. 已拍板决策
+当前 workspace 列表是 metadata-only、有界分页（`limit` 与 opaque `cursor`，响应 `X-Next-Cursor`）；长 artifact 通过 range/full/download/search 按需访问。浏览器侧已验证 bounded artifact loader（按 artifact/range 去重、generation 取消过期读取、LRU 字节预算），但这不是完整 session 投影：当前页面只对已加载的 exchange/session lineage 建树，较早或未分页加载的轮次不会自动出现在 projection 中，需显式加载更多页面/上下文。捕获不完整或请求范围不足时，投影必须保持 partial/truncated，不得当作完整 JSON/SSE 解析。
+
+Raw JSON tree 目前只提供有界默认展开、长值摘要和 partial 文本回退；它仍会物化已加载 JSON 的完整节点树，尚未实现真正的节点级 virtualization/windowing。SSE 事件列表和 live stream projection 也仍按已观察/已加载记录渲染，尚未实现完全虚拟化；大 SSE/JSON 的进一步窗口化仍是后续工作。
+
+## 9. 分期与验收
+
+历史分期名称仅用于说明实现边界，不表示待办状态。Phase A（面板）、Phase B（归属）和 Phase C（合并视图）均已实现。当前已验证的有界能力是：workspace metadata 分页（limit/cursor）、artifact range/full/download/search 的边界、浏览器 artifact loader 的去重/取消/LRU 字节预算，以及 incomplete/partial artifact 的安全回退。Raw JSON tree 和 SSE/live projection 仍非完全虚拟化，session projection 也不是跨全部历史的全量投影。后续如扩展全量 session hydration、节点/SSE windowing 或持久化/保留策略，必须先更新本节和 runtime contract。
+
+## 10. 已拍板决策
 
 - 链归属结构永远按原始 inbound 计算（"结构看 harness，内容看 wire"）。
 - system/instructions 折叠为虚拟首元素进入链身份，三协议统一：改 system 即新 session。
 - tools 与 model 为轮次级软信号：不断链，打 boundary 标记；面板 model 显示最新轮次值。
 - 聊天协议请求行移除 URL；非聊天透传保留 method/path。
 - 上下文占用只用 upstream usage，不估算、不内置 tokenizer；anthropic 需加和 cache 字段。
-- 位置索引为内存态，不做持久化（持久化为独立议题）。
+- 位置索引为进程内存态；未启用 durable 时重启即清空。启用 durable-local 时，启动从 SQLite 保存的 session/exchange metadata hydration，artifact body 仍按需读取。
