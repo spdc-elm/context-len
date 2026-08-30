@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -80,23 +81,34 @@ func main() {
 			ClientAuth:       auth.Config{Enabled: fileConfig.ClientAuth.Enabled, APIKey: fileConfig.ClientAuth.APIKey},
 			AllowNonLoopback: os.Getenv("CONTEXT_LENS_ALLOW_NON_LOOPBACK") == "1",
 			MaxBodyBytes:     128 << 20,
+			DurableCatalogPath: func() string {
+				if os.Getenv("CONTEXT_LENS_DURABLE") == "1" {
+					return filepath.Join(configuredDataDir(), "catalog.sqlite")
+				}
+				return ""
+			}(),
 			StoreConfig: persistence.Config{
 				MaxArtifactBytes: 128 << 20,
 				MaxTotalBytes:    2 << 30,
-				MaxMemoryBytes:   512 << 20,
+				MaxMemoryBytes:   64 << 20,
 				MaxArtifacts:     10_000,
-				TTL:              24 * time.Hour,
-				CleanupInterval:  5 * time.Minute,
+				SpillRoot:        filepath.Join(configuredDataDir(), "artifacts"),
+				// Standalone artifacts can still be referenced by the registry/catalog after
+				// capture completes. Disable independent expiry until retention is
+				// owner-aware; capacity stays bounded by MaxTotalBytes and explicit Clear.
+				TTL:             0,
+				CleanupInterval: 0,
 			},
 		})
 		if err != nil {
 			log.Fatalf("invalid CONTEXT_LENS_UPSTREAM: %v", err)
 		}
 		workspaceServer = workspace.New(workspace.Config{
-			Registry:         gatewayServer.Registry(),
+			Backend:          gatewayServer.WorkspaceBackend(),
 			Artifacts:        gatewayServer.Store(),
 			Policy:           gatewayServer.Policy(),
 			Events:           gatewayServer,
+			ClearQueue:       gatewayServer.ClearQueue,
 			MaxArtifactBytes: 128 << 20,
 		})
 		routes := http.NewServeMux()
@@ -110,9 +122,10 @@ func main() {
 		if workspaceServer != nil {
 			_ = workspaceServer.Close()
 		}
-		if gatewayServer != nil && gatewayServer.Store() != nil {
-			_ = gatewayServer.Store().Close()
+		if gatewayServer != nil {
+			_ = gatewayServer.Close()
 		}
+
 	}()
 	errCh := make(chan error, 1)
 	go func() {
@@ -174,6 +187,13 @@ func configuredConfigPath() string {
 		return "config.local.json"
 	}
 	return ""
+}
+
+func configuredDataDir() string {
+	if value := strings.TrimSpace(os.Getenv("CONTEXT_LENS_DATA_DIR")); value != "" {
+		return value
+	}
+	return ".context-lens-run"
 }
 
 func configuredAddr() string {

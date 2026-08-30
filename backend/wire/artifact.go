@@ -19,6 +19,13 @@ import (
 	"time"
 )
 
+// ArtifactMatch is a byte-offset match returned by artifact search. End is
+// exclusive and matches the [start,end) range convention used by ReadRange.
+type ArtifactMatch struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+}
+
 // ArtifactRef is the serializable reference to a body blob.  Body bytes are
 // kept separately from this value; storage_ref identifies the backing store
 // entry and artifact_id is the stable identity used by the workspace API.
@@ -184,8 +191,21 @@ func SHA256Hex(body []byte) string {
 // only the reference and provide the same Reader contract; this primitive is
 // intentionally small and deterministic for the local MVP and tests.
 type BodyArtifact struct {
-	ref  ArtifactRef
-	body []byte
+	ref    ArtifactRef
+	body   []byte
+	opener func() (io.ReadCloser, error)
+}
+
+// NewLazyArtifact constructs a metadata-backed artifact. The opener runs
+// only when transport or inspection explicitly requests bytes.
+func NewLazyArtifact(ref ArtifactRef, opener func() (io.ReadCloser, error)) (BodyArtifact, error) {
+	if err := ref.Validate(); err != nil {
+		return BodyArtifact{}, err
+	}
+	if opener == nil {
+		return BodyArtifact{}, errors.New("wire: lazy artifact opener is required")
+	}
+	return BodyArtifact{ref: ref, opener: opener}, nil
 }
 
 // Ref returns a value copy of the artifact metadata.  Mutating the returned
@@ -196,21 +216,53 @@ func (a BodyArtifact) Ref() ArtifactRef { return a.ref }
 // name when wiring exchange snapshots.
 func (a BodyArtifact) ArtifactRef() ArtifactRef { return a.ref }
 
-// Bytes returns a copy of the exact application bytes.  It never decodes or
-// re-encodes JSON, SSE, or any other protocol body.
-func (a BodyArtifact) Bytes() []byte { return cloneBytes(a.body) }
+func (a BodyArtifact) Bytes() []byte {
+	if a.opener == nil {
+		return cloneBytes(a.body)
+	}
+	r, err := a.opener()
+	if err != nil {
+		return nil
+	}
+	defer r.Close()
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// OpenReader opens the backing source and preserves source errors.
+func (a BodyArtifact) OpenReader() (io.ReadCloser, error) {
+	if a.opener != nil {
+		return a.opener()
+	}
+	return io.NopCloser(bytes.NewReader(a.body)), nil
+}
 
 // Reader returns a fresh reader positioned at byte zero.  Each call has an
 // independent cursor and reads the exact artifact bytes.
-func (a BodyArtifact) Reader() io.Reader { return bytes.NewReader(a.body) }
+func (a BodyArtifact) Reader() io.Reader {
+	r, err := a.OpenReader()
+	if err != nil {
+		return errorReader{err: err}
+	}
+	return r
+}
 
 // Open returns a fresh ReadCloser over the exact artifact bytes.  This mirrors
 // a blob store's reader API while keeping this in-memory primitive dependency-
 // free.
-func (a BodyArtifact) Open() io.ReadCloser { return io.NopCloser(bytes.NewReader(a.body)) }
+func (a BodyArtifact) Open() io.ReadCloser {
+	r, err := a.OpenReader()
+	if err != nil {
+		return io.NopCloser(errorReader{err: err})
+	}
+	return r
+}
 
 // Len reports the number of bytes held by this in-memory artifact.
-func (a BodyArtifact) Len() int64 { return int64(len(a.body)) }
+func (a BodyArtifact) Len() int64 { return a.ref.Size }
 
 // Complete reports whether capture reached the end of the application body.
 func (a BodyArtifact) Complete() bool { return a.ref.Complete }
@@ -222,8 +274,24 @@ func (a BodyArtifact) Status() CaptureStatus { return a.ref.Status() }
 // SHA-256.  It is useful at transport boundaries and in tests.  A false
 // result indicates corruption or an incorrectly paired external blob.
 func (a BodyArtifact) Verify() bool {
-	return a.ref.Size == int64(len(a.body)) && a.ref.SHA256 == SHA256Hex(a.body)
+	if err := a.ref.Validate(); err != nil {
+		return false
+	}
+	if a.opener == nil {
+		return a.ref.Size == int64(len(a.body)) && a.ref.SHA256 == SHA256Hex(a.body)
+	}
+	r, err := a.opener()
+	if err != nil {
+		return false
+	}
+	defer r.Close()
+	b, err := io.ReadAll(r)
+	return err == nil && int64(len(b)) == a.ref.Size && a.ref.SHA256 == SHA256Hex(b)
 }
+
+type errorReader struct{ err error }
+
+func (e errorReader) Read([]byte) (int, error) { return 0, e.err }
 
 // MarshalJSON serializes metadata only.  Body bytes deliberately never appear
 // inline in snapshots/events; callers retrieve them by ArtifactID/StorageRef.

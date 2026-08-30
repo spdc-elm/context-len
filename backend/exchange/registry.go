@@ -24,6 +24,7 @@ import (
 type Registry struct {
 	mu       sync.RWMutex
 	items    map[string]*Exchange
+	restored map[string]Snapshot
 	defaults policy.Policy
 }
 
@@ -46,6 +47,7 @@ type Exchange struct {
 	responseAvailable bool
 	operation         bool
 	upstreamStarted   bool
+	cleared           bool
 	artifacts         map[string]wire.BodyArtifact
 }
 
@@ -61,7 +63,7 @@ func NewRegistry(defaults policy.Policy) *Registry {
 	if err := defaults.Validate(); err != nil {
 		defaults = policy.Default()
 	}
-	return &Registry{items: make(map[string]*Exchange), defaults: defaults.Normalize()}
+	return &Registry{items: make(map[string]*Exchange), restored: make(map[string]Snapshot), defaults: defaults.Normalize()}
 }
 
 // Create registers an exchange before starting any asynchronous upstream
@@ -134,6 +136,9 @@ func (r *Registry) Create(p CreateParams) (*Exchange, error) {
 		cancel()
 		return nil, fmt.Errorf("exchange: duplicate id %q", id)
 	}
+	if _, exists := r.restored[id]; exists {
+		delete(r.restored, id)
+	}
 	r.items[id] = e
 	r.mu.Unlock()
 
@@ -151,6 +156,9 @@ func (r *Registry) Create(p CreateParams) (*Exchange, error) {
 	e.emit(initialEvent)
 	if startSink != nil {
 		emitEvent(startSink, startEvent)
+		if isTerminalEvent(startEvent.Kind) {
+			e.doneOnce.Do(func() { close(e.done) })
+		}
 	}
 	if launch {
 		e.launchUpstream()
@@ -179,8 +187,13 @@ func (r *Registry) Get(id string) (*Exchange, bool) {
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	e, ok := r.items[id]
-	return e, ok
+	if e, ok := r.items[id]; ok {
+		return e, true
+	}
+	if snap, ok := r.restored[id]; ok {
+		return restoredExchange(snap), true
+	}
+	return nil, false
 }
 
 func (r *Registry) AddWarnings(exchangeID string, warnings ...string) error {
@@ -284,11 +297,16 @@ func (r *Registry) List() []Snapshot {
 	for _, e := range r.items {
 		items = append(items, e)
 	}
+	restored := make([]Snapshot, 0, len(r.restored))
+	for _, s := range r.restored {
+		restored = append(restored, cloneSnapshot(s))
+	}
 	r.mu.RUnlock()
-	out := make([]Snapshot, 0, len(items))
+	out := make([]Snapshot, 0, len(items)+len(restored))
 	for _, e := range items {
 		out = append(out, e.Snapshot())
 	}
+	out = append(out, restored...)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
 			return out[i].ExchangeID < out[j].ExchangeID
@@ -296,6 +314,50 @@ func (r *Registry) List() []Snapshot {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out
+}
+
+// Clear removes every exchange from the registry. Active exchanges are
+// cancelled and their completion channels are closed without publishing
+// terminal events, because the queue reset itself is the observable action.
+// Existing in-flight callbacks see a cleared exchange and cannot publish
+// events back into the cleared queue.
+func (r *Registry) Clear() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	items := make([]*Exchange, 0, len(r.items))
+	for _, e := range r.items {
+		items = append(items, e)
+	}
+	r.items = make(map[string]*Exchange)
+	r.restored = make(map[string]Snapshot)
+	r.mu.Unlock()
+	for _, e := range items {
+		e.clear()
+	}
+	return nil
+}
+
+// Restore adds a terminal snapshot loaded from durable metadata. Restored
+// exchanges are read-only until a fresh runtime exchange with the same id is created.
+func (r *Registry) Restore(s Snapshot) error {
+	if r == nil || s.ExchangeID == "" {
+		return errors.New("exchange: invalid restored snapshot")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.items[s.ExchangeID]; ok {
+		return fmt.Errorf("exchange: duplicate id %q", s.ExchangeID)
+	}
+	r.restored[s.ExchangeID] = cloneSnapshot(s)
+	return nil
+}
+
+func restoredExchange(s Snapshot) *Exchange {
+	done := make(chan struct{})
+	close(done)
+	return &Exchange{snap: cloneSnapshot(s), done: done, artifacts: make(map[string]wire.BodyArtifact), ctx: context.Background(), cancel: func() {}}
 }
 
 // Command dispatches a workspace command by exchange id.
@@ -747,6 +809,9 @@ func (e *Exchange) beginUpstreamLocked(artifact wire.BodyArtifact, requestChange
 		return Event{}, nil, false
 	}
 	if e.ctx.Err() != nil {
+		// Terminal completion is published only after the terminal event sink has
+		// finished.  In particular, durable catalog sinks must commit the final
+		// snapshot before Wait/Done can unblock.
 		event, sink, _ := e.terminalLocked(StateCancelled, nil, EventCancelled, "context cancelled before upstream start")
 		return event, sink, false
 	}
@@ -1095,7 +1160,9 @@ func (e *Exchange) terminalLockedWithDelta(state State, err error, kind EventKin
 	if len(delta.Warnings) == 0 {
 		delta.Warnings = append([]string(nil), e.snap.Warnings...)
 	}
-	e.doneOnce.Do(func() { close(e.done) })
+	// Do not close done here. The terminal event is emitted after releasing
+	// e.mu, and done must remain closed until that sink (including durable
+	// catalog persistence) has completed.
 	event := Event{
 		EventID:       newEventID(),
 		ExchangeID:    e.snap.ExchangeID,
@@ -1117,8 +1184,59 @@ func (e *Exchange) resultLocked(mutation *MutationResult, event *Event) CommandR
 	return result
 }
 
-func (e *Exchange) emit(event Event)                   { emitEvent(e.params.Events, event) }
-func (e *Exchange) emitTo(sink EventSink, event Event) { emitEvent(sink, event) }
+func (e *Exchange) clear() {
+	if e == nil {
+		return
+	}
+	var cancel context.CancelFunc
+	e.mu.Lock()
+	if e.cleared {
+		e.mu.Unlock()
+		return
+	}
+	e.cleared = true
+	e.operation = false
+	if !e.snap.State.Terminal() {
+		e.snap.State = StateCancelled
+	}
+	e.doneOnce.Do(func() { close(e.done) })
+	cancel = e.cancel
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (e *Exchange) emit(event Event) {
+	e.mu.Lock()
+	cleared := e.cleared
+	e.mu.Unlock()
+	if cleared {
+		return
+	}
+	emitEvent(e.params.Events, event)
+}
+func (e *Exchange) emitTo(sink EventSink, event Event) {
+	e.mu.Lock()
+	cleared := e.cleared
+	e.mu.Unlock()
+	if cleared {
+		return
+	}
+	emitEvent(sink, event)
+	if isTerminalEvent(event.Kind) {
+		e.doneOnce.Do(func() { close(e.done) })
+	}
+}
+
+func isTerminalEvent(kind EventKind) bool {
+	switch kind {
+	case EventCompleted, EventDropped, EventCancelled, EventFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 func emitEvent(sink EventSink, event Event) {
 	if sink != nil && event.EventID != "" {

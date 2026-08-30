@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,8 @@ var (
 	ErrCorruptArtifact   = errors.New("persistence: stored artifact is corrupt")
 	ErrInvalidRange      = errors.New("persistence: invalid artifact range")
 	ErrInvalidConfig     = errors.New("persistence: invalid store configuration")
+	ErrStaleArtifact     = errors.New("persistence: artifact capture belongs to cleared workspace")
+	ErrBlobBusy          = errors.New("persistence: blob has active references or readers")
 )
 
 // Config controls retention and backing storage.
@@ -83,6 +86,9 @@ type Config struct {
 	TTL             time.Duration
 	CleanupInterval time.Duration
 	Clock           func() time.Time
+	// PreserveFilesOnClose keeps content-addressed spill files for a later durable reopen.
+	// Ephemeral stores leave this false and remove files on close.
+	PreserveFilesOnClose bool
 }
 
 // Stats is a metadata-only store diagnostic.  It contains no body bytes.
@@ -101,6 +107,7 @@ type Store struct {
 
 	cfg     Config
 	entries map[string]*entry
+	blobs   map[string]*blobRecord
 
 	usedBytes   int64
 	memoryBytes int64
@@ -109,16 +116,27 @@ type Store struct {
 	closeOnce   sync.Once
 	janitorStop chan struct{}
 	janitorDone chan struct{}
+	epoch       uint64
 }
 
 type entry struct {
 	ref         wire.ArtifactRef
 	data        []byte
 	path        string
+	blob        *blobRecord
 	createdAt   time.Time
 	lastAccess  time.Time
 	activeReads int
 	removed     bool
+}
+
+type blobRecord struct {
+	key            string
+	path           string
+	size           int64
+	refs           int
+	activeReads    int
+	removeWhenIdle bool
 }
 
 // NewArtifactStore constructs an artifact store.  It creates SpillRoot when
@@ -134,6 +152,7 @@ func NewArtifactStore(cfg Config) (*Store, error) {
 	s := &Store{
 		cfg:     normalized,
 		entries: make(map[string]*entry),
+		blobs:   make(map[string]*blobRecord),
 	}
 	if normalized.CleanupInterval > 0 && normalized.TTL > 0 {
 		s.janitorStop = make(chan struct{})
@@ -280,7 +299,242 @@ func (s *Store) Put(ctx context.Context, artifact wire.BodyArtifact) (wire.Artif
 	return ref, nil
 }
 
-// PutArtifact is the context-free convenience form of Put.
+// Adopt registers an existing content-addressed blob and artifact reference after
+// restart. It validates identity, size, and that the path remains beneath SpillRoot.
+func (s *Store) Adopt(ctx context.Context, ref wire.ArtifactRef, blob StorageRef) error {
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	if s == nil {
+		return ErrClosed
+	}
+	if err := ref.Validate(); err != nil {
+		return fmt.Errorf("%w: invalid ref", ErrInvalidArtifact)
+	}
+	if err := ValidateArtifactID(ref.ArtifactID); err != nil {
+		return err
+	}
+	if blob.Key == "" {
+		return fmt.Errorf("%w: missing blob key", ErrInvalidArtifact)
+	}
+	parts := strings.Split(blob.Key, "-")
+	if len(parts) != 2 || len(parts[0]) != 64 {
+		return fmt.Errorf("%w: invalid storage ref", ErrInvalidArtifact)
+	}
+	if ref.SHA256 != parts[0] {
+		return fmt.Errorf("%w: sha mismatch", ErrCorruptArtifact)
+	}
+	path, err := blobPathForKey(s.cfg.SpillRoot, blob.Key)
+	if err != nil {
+		return err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNotFound, err)
+	}
+	if st.Size() != ref.Size {
+		return ErrCorruptArtifact
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	h := sha256.New()
+	if _, err = io.Copy(h, f); err != nil {
+		_ = f.Close()
+		return err
+	}
+	_ = f.Close()
+	if hex.EncodeToString(h.Sum(nil)) != ref.SHA256 {
+		return ErrCorruptArtifact
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrClosed
+	}
+	if _, ok := s.entries[ref.ArtifactID]; ok {
+		return nil
+	}
+	if s.cfg.MaxArtifacts > 0 && len(s.entries) >= s.cfg.MaxArtifacts {
+		return ErrStoreFull
+	}
+	b := s.blobs[blob.Key]
+	if b == nil {
+		if s.cfg.MaxTotalBytes > 0 && (ref.Size > s.cfg.MaxTotalBytes || s.usedBytes > s.cfg.MaxTotalBytes-ref.Size) {
+			return ErrStoreFull
+		}
+		b = &blobRecord{key: blob.Key, path: path, size: ref.Size}
+		s.blobs[blob.Key] = b
+		s.usedBytes += ref.Size
+	} else if b.size != ref.Size {
+		return ErrCorruptArtifact
+	}
+	b.refs++
+	s.entries[ref.ArtifactID] = &entry{ref: ref, blob: b, path: path, createdAt: s.now(), lastAccess: s.now()}
+	return nil
+}
+
+// StorageRef identifies a content-addressed blob for Adopt.
+type StorageRef struct{ Key string }
+
+// RemoveContentAddressedBlob removes a durable blob once catalog ownership has
+// been dropped. It refuses removal while this store still has references or
+// active readers; callers should retry after readers close.
+func (s *Store) RemoveContentAddressedBlob(ctx context.Context, key string) error {
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	if s == nil {
+		return ErrClosed
+	}
+	parts := strings.Split(key, "-")
+	if len(parts) != 2 || len(parts[0]) != 64 {
+		return fmt.Errorf("%w: invalid storage ref", ErrInvalidArtifact)
+	}
+	if _, err := strconv.ParseInt(parts[1], 10, 64); err != nil {
+		return fmt.Errorf("%w: invalid storage ref", ErrInvalidArtifact)
+	}
+	path, err := blobPathForKey(s.cfg.SpillRoot, key)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	if b := s.blobs[key]; b != nil {
+		if b.refs > 0 || b.activeReads > 0 {
+			s.mu.Unlock()
+			return ErrBlobBusy
+		}
+		delete(s.blobs, key)
+	}
+	s.mu.Unlock()
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// ReconcileSpill quarantines bounded unknown content-addressed files after a
+// durable restart. Only keys present in referenced may be adopted; all other
+// files are moved out of the authority path rather than deleted. Files held by
+// an active reader are left in place and retried on a later reconciliation.
+func (s *Store) ReconcileSpill(ctx context.Context, referenced map[string]struct{}, limit int) (int, error) {
+	if err := checkContext(ctx); err != nil {
+		return 0, err
+	}
+	if s == nil {
+		return 0, ErrClosed
+	}
+	if limit <= 0 {
+		limit = 256
+	}
+	root := s.cfg.SpillRoot
+	if root == "" {
+		return 0, nil
+	}
+	base := filepath.Join(root, "blobs")
+	quarantine := filepath.Join(root, ".quarantine")
+	count := 0
+	err := filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, os.ErrNotExist) {
+			return filepath.SkipAll
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if count >= limit {
+			return filepath.SkipAll
+		}
+		if d.IsDir() || filepath.Ext(d.Name()) != ".blob" {
+			return nil
+		}
+		key := strings.TrimSuffix(d.Name(), ".blob")
+		if _, ok := referenced[key]; ok {
+			return nil
+		}
+		s.mu.Lock()
+		active := false
+		if b := s.blobs[key]; b != nil {
+			active = b.activeReads > 0 || b.refs > 0
+		}
+		s.mu.Unlock()
+		if active {
+			return nil
+		}
+		if err := os.MkdirAll(quarantine, defaultRootMode); err != nil {
+			return err
+		}
+		dst := filepath.Join(quarantine, d.Name())
+		if _, statErr := os.Stat(dst); statErr == nil {
+			dst = filepath.Join(quarantine, d.Name()+"."+strconv.FormatInt(time.Now().UnixNano(), 10))
+		}
+		if err := os.Rename(path, dst); err != nil {
+			return err
+		}
+		count++
+		return nil
+	})
+	if errors.Is(err, filepath.SkipAll) {
+		err = nil
+	}
+	// Staging files have no catalog identity and can never become authority
+	// after restart. Quarantine a bounded number instead of deleting them.
+	if err == nil && count < limit {
+		staging := filepath.Join(root, ".staging")
+		err = filepath.WalkDir(staging, func(path string, d os.DirEntry, walkErr error) error {
+			if errors.Is(walkErr, os.ErrNotExist) {
+				return filepath.SkipAll
+			}
+			if walkErr != nil {
+				return walkErr
+			}
+			if count >= limit {
+				return filepath.SkipAll
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if e := os.MkdirAll(quarantine, defaultRootMode); e != nil {
+				return e
+			}
+			dst := filepath.Join(quarantine, "staging-"+d.Name())
+			if _, e := os.Stat(dst); e == nil {
+				dst += "." + strconv.FormatInt(time.Now().UnixNano(), 10)
+			}
+			if e := os.Rename(path, dst); e != nil {
+				return e
+			}
+			count++
+			return nil
+		})
+		if errors.Is(err, filepath.SkipAll) {
+			err = nil
+		}
+	}
+	return count, err
+}
+
+func blobPathForKey(root, key string) (string, error) {
+	if root == "" {
+		return "", fmt.Errorf("%w: spill root required", ErrInvalidConfig)
+	}
+	parts := strings.Split(key, "-")
+	if len(parts) != 2 || len(parts[0]) < 4 {
+		return "", ErrInvalidArtifact
+	}
+	p := filepath.Join(root, "blobs", parts[0][:2], parts[0][2:4], key+".blob")
+	cleanRoot, _ := filepath.Abs(root)
+	clean, _ := filepath.Abs(p)
+	if !strings.HasPrefix(clean, cleanRoot+string(filepath.Separator)) {
+		return "", ErrInvalidArtifact
+	}
+	return p, nil
+}
+
 func (s *Store) PutArtifact(artifact wire.BodyArtifact) (wire.ArtifactRef, error) {
 	return s.Put(context.Background(), artifact)
 }
@@ -347,6 +601,9 @@ func (s *Store) Open(ctx context.Context, artifactID string) (io.ReadCloser, wir
 		return nil, wire.ArtifactRef{}, ErrNotFound
 	}
 	e.activeReads++
+	if e.blob != nil {
+		e.blob.activeReads++
+	}
 	e.lastAccess = s.now()
 	ref := e.ref
 	var src io.Reader
@@ -355,6 +612,9 @@ func (s *Store) Open(ctx context.Context, artifactID string) (io.ReadCloser, wir
 		file, err := os.Open(e.path)
 		if err != nil {
 			e.activeReads--
+			if e.blob != nil {
+				e.blob.activeReads--
+			}
 			s.mu.Unlock()
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, wire.ArtifactRef{}, ErrCorruptArtifact
@@ -530,18 +790,83 @@ func (s *Store) Delete(ctx context.Context, artifactID string) error {
 	}
 	delete(s.entries, artifactID)
 	e.removed = true
-	s.usedBytes -= e.ref.Size
 	if e.data != nil {
+		s.usedBytes -= e.ref.Size
 		s.memoryBytes -= e.ref.Size
 		e.data = nil
 	}
-	if e.activeReads == 0 {
-		path = e.path
-		e.path = ""
+	if e.blob != nil {
+		e.blob.refs--
+		if e.blob.refs == 0 {
+			s.usedBytes -= e.blob.size
+		}
+		if e.blob.refs == 0 && e.blob.activeReads == 0 {
+			path = e.blob.path
+			e.blob.path = ""
+			delete(s.blobs, e.blob.key)
+		}
+	} else {
+		// Non-blob entries are the legacy Put path. Memory entries were
+		// accounted above; spilled Put entries still own one physical file.
+		if e.data == nil {
+			s.usedBytes -= e.ref.Size
+		}
+		if e.activeReads == 0 {
+			path = e.path
+			e.path = ""
+		}
 	}
 	s.mu.Unlock()
 	return removeBackingFile(path)
 }
+
+// Clear removes every indexed artifact while keeping the store usable for
+// subsequent captures. Active readers keep their already-open data and
+// backing files are removed after those readers release their leases.
+func (s *Store) Clear(ctx context.Context) error {
+	if err := checkContext(ctx); err != nil {
+		return err
+	}
+	if s == nil {
+		return ErrClosed
+	}
+	var paths []string
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrClosed
+	}
+	s.epoch++
+	for id, e := range s.entries {
+		delete(s.entries, id)
+		e.removed = true
+		if e.data != nil {
+			e.data = nil
+		}
+		if e.blob == nil && e.activeReads == 0 && e.path != "" {
+			paths = append(paths, e.path)
+			e.path = ""
+		}
+	}
+	for key, b := range s.blobs {
+		b.refs = 0
+		// Clear invalidates every logical owner. If a reader still holds the
+		// physical blob, releaseReader must remove it when the last lease ends.
+		b.removeWhenIdle = true
+		if b.activeReads == 0 && b.path != "" {
+			paths = append(paths, b.path)
+			b.path = ""
+		}
+		delete(s.blobs, key)
+	}
+	s.usedBytes = 0
+	s.memoryBytes = 0
+	s.mu.Unlock()
+	return removeBackingFiles(paths)
+}
+
+// ClearAll is a descriptive alias for Clear.
+func (s *Store) ClearAll(ctx context.Context) error { return s.Clear(ctx) }
 
 // Cleanup removes entries whose last access is at least TTL old.  Incomplete
 // artifacts are retained subject to the same TTL as complete artifacts; their
@@ -572,12 +897,22 @@ func (s *Store) Cleanup(ctx context.Context) (int, error) {
 		delete(s.entries, id)
 		e.removed = true
 		removed++
-		s.usedBytes -= e.ref.Size
 		if e.data != nil {
 			s.memoryBytes -= e.ref.Size
 			e.data = nil
 		}
-		if e.activeReads == 0 {
+		if e.blob != nil {
+			e.blob.refs--
+			if e.blob.refs == 0 {
+				s.usedBytes -= e.blob.size
+				if e.blob.activeReads == 0 && e.blob.path != "" {
+					paths = append(paths, e.blob.path)
+					e.blob.path = ""
+					delete(s.blobs, e.blob.key)
+				}
+			}
+		} else {
+			s.usedBytes -= e.ref.Size
 			if e.path != "" {
 				paths = append(paths, e.path)
 				e.path = ""
@@ -626,10 +961,20 @@ func (s *Store) Close() error {
 			if e.data != nil {
 				e.data = nil
 			}
-			if e.activeReads == 0 && e.path != "" {
+			if !s.cfg.PreserveFilesOnClose && e.blob == nil && e.activeReads == 0 && e.path != "" {
 				paths = append(paths, e.path)
 				e.path = ""
 			}
+		}
+		for key, b := range s.blobs {
+			b.refs = 0
+			b.removeWhenIdle = !s.cfg.PreserveFilesOnClose
+			if !s.cfg.PreserveFilesOnClose && b.activeReads == 0 && b.path != "" {
+
+				paths = append(paths, b.path)
+				b.path = ""
+			}
+			delete(s.blobs, key)
 		}
 		s.usedBytes = 0
 		s.memoryBytes = 0
@@ -666,9 +1011,20 @@ func (s *Store) releaseReader(e *entry) {
 	if e.activeReads > 0 {
 		e.activeReads--
 	}
-	if e.removed && e.activeReads == 0 && e.path != "" {
-		path = e.path
-		e.path = ""
+	if e.removed && e.activeReads == 0 {
+		if e.blob != nil {
+			e.blob.activeReads--
+			if e.blob.refs == 0 && e.blob.activeReads == 0 && e.blob.removeWhenIdle && e.blob.path != "" {
+				path = e.blob.path
+				e.blob.path = ""
+				delete(s.blobs, e.blob.key)
+			}
+		} else if e.path != "" {
+			path = e.path
+			e.path = ""
+		}
+	} else if e.blob != nil {
+		e.blob.activeReads--
 	}
 	s.mu.Unlock()
 	_ = removeBackingFile(path)
@@ -963,6 +1319,12 @@ func (r *verifyingReader) Read(p []byte) (int, error) {
 	if n > 0 {
 		r.count += int64(n)
 		r.hash.Write(p[:n])
+		// A reader may return data together with io.EOF. Defer terminal
+		// verification until the next call so callers that stop on the
+		// returned bytes still receive a proper integrity result on EOF.
+		if errors.Is(err, io.EOF) {
+			return n, nil
+		}
 	}
 	if err != nil {
 		if errors.Is(err, io.EOF) {

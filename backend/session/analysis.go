@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -19,6 +20,37 @@ type RequestAnalysis struct {
 	MessageDigests     []string
 	ToolsDigest        string
 	PreviousResponseID string
+	// AnalysisComplete is true only when the entire body was read and parsed
+	// successfully. Identity consumers must not use facts from an incomplete
+	// analysis; summaries may still be shown conservatively.
+	AnalysisComplete bool
+}
+
+// DefaultAnalysisBudget bounds capture-time inspection memory. It is
+// deliberately independent of the artifact capture limit and wire transport.
+// Eight MiB accommodates production-sized chat requests while still
+// preventing unbounded JSON materialization.
+const DefaultAnalysisBudget int64 = 8 * 1024 * 1024
+
+// AnalyzeRequestReader performs bounded observation of an artifact reader. It
+// reads at most budget+1 bytes, never materializing an unbounded request. A
+// body exceeding budget yields AnalysisComplete=false and no identity facts.
+func AnalyzeRequestReader(protocol inspection.Protocol, reader io.Reader, budget int64) (RequestAnalysis, error) {
+	if budget <= 0 {
+		budget = DefaultAnalysisBudget
+	}
+	if reader == nil {
+		return RequestAnalysis{}, io.ErrUnexpectedEOF
+	}
+	limited := io.LimitReader(reader, budget+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return RequestAnalysis{}, err
+	}
+	if int64(len(body)) > budget {
+		return RequestAnalysis{AnalysisComplete: false}, nil
+	}
+	return AnalyzeRequest(protocol, body), nil
 }
 
 // RequestFacts is the subset of RequestAnalysis consumed by Index.Assign.
@@ -38,10 +70,12 @@ func AnalyzeRequest(protocol inspection.Protocol, body []byte) RequestAnalysis {
 	if !IsChatProtocol(protocol) {
 		return analysis
 	}
-	root := inspection.InspectJSON(body).Root
-	if root == nil || root.Kind != inspection.JSONObject {
+	projection := inspection.InspectJSON(body)
+	root := projection.Root
+	if !projection.Valid || root == nil || root.Kind != inspection.JSONObject {
 		return analysis
 	}
+	analysis.AnalysisComplete = true
 	analysis.Summary = summarizeRequest(protocol, root)
 	analysis.MessageDigests = messageDigests(protocol, root)
 	analysis.ToolsDigest = nodeDigest(arrayField(root, "tools"))

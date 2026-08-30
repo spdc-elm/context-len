@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,43 @@ import (
 	"context-lens/backend/wire"
 )
 
+func TestClearInvalidatesBlockedCaptureCommitAndAllowsNextCapture(t *testing.T) {
+	s, err := NewArtifactStore(Config{MaxArtifactBytes: 1 << 20, MaxTotalBytes: 4 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	w, err := s.Begin(context.Background(), wire.ArtifactOptions{ArtifactID: "old", Stage: wire.StageRequestInbound, Direction: wire.DirectionInbound})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Clear(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Commit(context.Background(), true); !errors.Is(err, ErrStaleArtifact) {
+		t.Fatalf("old commit error=%v, want ErrStaleArtifact", err)
+	}
+	if got := s.Stats().Artifacts; got != 0 {
+		t.Fatalf("stale capture indexed %d artifacts", got)
+	}
+
+	n, err := s.Begin(context.Background(), wire.ArtifactOptions{ArtifactID: "new", Stage: wire.StageRequestInbound, Direction: wire.DirectionInbound})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Write([]byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Commit(context.Background(), true); err != nil {
+		t.Fatalf("new commit: %v", err)
+	}
+	if got := s.Stats().Artifacts; got != 1 {
+		t.Fatalf("new capture artifact count=%d, want 1", got)
+	}
+}
 func TestStorePutGetMetadataAndImmutability(t *testing.T) {
 	store, err := NewArtifactStore(Config{MaxArtifactBytes: 1 << 20, MaxTotalBytes: 2 << 20, MaxMemoryBytes: 1 << 20})
 	if err != nil {
@@ -163,6 +201,12 @@ func TestStoreSpillsToDiskWithSafePathAndExactBytes(t *testing.T) {
 	}
 	if !bytes.Equal(part, body[2:7]) {
 		t.Fatalf("range = %v, want %v", part, body[2:7])
+	}
+	if err := store.Delete(context.Background(), ref.ArtifactID); err != nil {
+		t.Fatalf("delete spilled Put entry: %v", err)
+	}
+	if stats := store.Stats(); stats.Artifacts != 0 || stats.Bytes != 0 || stats.MemoryBytes != 0 || stats.DiskBytes != 0 {
+		t.Fatalf("stats after deleting spilled Put entry = %#v", stats)
 	}
 }
 
@@ -372,4 +416,74 @@ func mustReadFile(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return body
+}
+
+func TestReconcileSpillQuarantinesUnknownAndStaging(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewArtifactStore(Config{SpillRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	key := strings.Repeat("a", 64) + "-3"
+	blobDir := filepath.Join(root, "blobs", "aa", "aa")
+	if err := os.MkdirAll(blobDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blobDir, key+".blob"), []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".staging"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".staging", "capture-x"), []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ReconcileSpill(context.Background(), map[string]struct{}{}, 10); err != nil || n != 2 {
+		t.Fatalf("reconcile n=%d err=%v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".quarantine", key+".blob")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".quarantine", "staging-capture-x")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDurableAdoptAfterClose(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewStore(Config{SpillRoot: root, MaxMemoryBytes: 1, PreserveFilesOnClose: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := s.Begin(context.Background(), wire.ArtifactOptions{ArtifactID: "durable-artifact", Stage: "request", Direction: "request"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("durable exact bytes")
+	if _, err = w.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := w.Commit(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := NewStore(Config{SpillRoot: root, MaxMemoryBytes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	if err := s2.Adopt(context.Background(), ref, StorageRef{Key: ref.StorageRef}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s2.Get(context.Background(), ref.ArtifactID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Bytes(), body) {
+		t.Fatalf("body mismatch: %q", got.Bytes())
+	}
 }

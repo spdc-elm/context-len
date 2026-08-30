@@ -6,15 +6,16 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"context-lens/backend/auth"
+	"context-lens/backend/catalog"
 	"context-lens/backend/exchange"
 	"context-lens/backend/inspection"
 	"context-lens/backend/persistence"
@@ -47,6 +49,8 @@ type Config struct {
 	// both are supplied.
 	ArtifactStore *persistence.Store
 	StoreConfig   persistence.Config
+	// DurableCatalogPath enables explicit restart-safe metadata persistence.
+	DurableCatalogPath string
 
 	Policy        *policy.Store
 	PolicyStore   *policy.Store
@@ -64,6 +68,10 @@ type Config struct {
 	// unlimited.  A body exceeding the limit is rejected rather than being
 	// forwarded with a misleading complete artifact.
 	MaxBodyBytes int64
+
+	// AnalysisBudget bounds capture-time request inspection. Zero selects the
+	// session package default. It never limits or changes wire forwarding.
+	AnalysisBudget int64
 
 	// Events is an optional observer.  It receives the same immutable event
 	// values as the exchange registry and is suitable for workspace adapters.
@@ -83,28 +91,46 @@ type Config struct {
 	ResponseDrainTimeout time.Duration
 }
 
-// DefaultResponseDrainTimeout bounds the post-terminal upstream drain when no
-// explicit value is configured.
-const DefaultResponseDrainTimeout = 5 * time.Second
+const (
+	// DefaultResponseDrainTimeout bounds the post-terminal upstream drain when no
+	// explicit value is configured.
+	DefaultResponseDrainTimeout = 5 * time.Second
+	// durableTrafficSession owns protocol snapshots that cannot be assigned to
+	// the chat session index (for example Responses-free health/model traffic).
+	// Exchanges have a NOT NULL session FK, so these observations still belong
+	// to an explicit, unpinned durable ownership unit rather than being dropped.
+	durableTrafficSession = "traffic-unassigned"
+)
+
+// ErrDurablePersistence is intentionally opaque. Catalog/storage failures can
+// contain filesystem or driver details; those details must never cross the
+// gateway API or be retained in workspace state.
+var ErrDurablePersistence = errors.New("gateway: durable catalog persistence failed")
 
 // Gateway is an HTTP handler and the owner of the concrete integration
 // objects needed by workspace.NewWithRegistry.  The registry remains the
 // source of truth for exchange state and commands.
 type Gateway struct {
-	upstream   *transport.Transport
-	registry   *exchange.Registry
-	store      *persistence.Store
-	policy     *policy.Store
-	maxBody    int64
-	observer   exchange.EventSink
-	clientAuth auth.Config
+	upstream      *transport.Transport
+	registry      *exchange.Registry
+	store         *persistence.Store
+	catalog       *catalog.Catalog
+	policy        *policy.Store
+	maxBody       int64
+	analysisLimit int64
+	observer      exchange.EventSink
+	clientAuth    auth.Config
 
 	// responseDrainTimeout bounds the post-terminal upstream drain.
 	responseDrainTimeout time.Duration
 
-	subMu sync.RWMutex
-	subs  map[uint64]func(exchange.Event)
-	subID atomic.Uint64
+	subMu        sync.RWMutex
+	subs         map[uint64]func(exchange.Event)
+	subID        atomic.Uint64
+	generation   atomic.Uint64
+	ingressMu    sync.RWMutex
+	durableErrMu sync.Mutex
+	durableErr   error
 
 	// sessions places captured requests into session trees. It observes the
 	// original inbound bytes only and never contributes transport input.
@@ -169,28 +195,134 @@ func New(cfg Config) (*Gateway, error) {
 	}
 
 	store := cfg.Store
+	ownedStore := false
 	if store == nil {
 		store = cfg.ArtifactStore
 	}
 	if store == nil {
 		var err error
-		store, err = persistence.NewArtifactStore(cfg.StoreConfig)
+		storeCfg := cfg.StoreConfig
+		if strings.TrimSpace(cfg.DurableCatalogPath) != "" {
+			storeCfg.PreserveFilesOnClose = true
+			// Durable mode must never silently fall back to memory-only
+			// capture. Keep blobs beside the catalog when the embedder did not
+			// explicitly choose a spill root.
+			if strings.TrimSpace(storeCfg.SpillRoot) == "" && strings.TrimSpace(storeCfg.Root) == "" {
+				storeCfg.SpillRoot = filepath.Join(filepath.Dir(cfg.DurableCatalogPath), "artifacts")
+			}
+		}
+		store, err = persistence.NewArtifactStore(storeCfg)
 		if err != nil {
 			return nil, err
+		}
+		ownedStore = true
+	}
+
+	var durable *catalog.Catalog
+	var hydrated []session.HydrationRecord
+	if strings.TrimSpace(cfg.DurableCatalogPath) != "" {
+		var err error
+		durable, err = catalog.Open(cfg.DurableCatalogPath)
+		if err != nil {
+			if ownedStore {
+				_ = store.Close()
+			}
+			return nil, fmt.Errorf("gateway: durable catalog: %w", err)
+		}
+		if rows, err := durable.ListExchanges(context.Background(), ""); err != nil {
+			_ = durable.Close()
+			if ownedStore {
+				_ = store.Close()
+			}
+			return nil, fmt.Errorf("gateway: durable exchanges: %w", err)
+		} else {
+			for _, x := range rows {
+				var snap exchange.Snapshot
+				if x.Envelope == "" {
+					continue
+				}
+				if err := json.Unmarshal([]byte(x.Envelope), &snap); err != nil || snap.ExchangeID == "" {
+					continue
+				}
+				if err := registry.Restore(snap); err != nil {
+					_ = durable.Close()
+					if ownedStore {
+						_ = store.Close()
+					}
+					return nil, fmt.Errorf("gateway: restore exchange: %w", err)
+				}
+				if snap.Session != nil {
+					hydrated = append(hydrated, session.HydrationRecord{ExchangeID: snap.ExchangeID, Protocol: inspection.Protocol(snap.Protocol), Assignment: *snap.Session, ResponseID: x.ResponseExchangeID})
+				}
+			}
+			// Session metadata is rebuilt from snapshots only; artifact bodies remain lazy.
+		}
+		refs, err := durable.ListAllArtifactRefs(context.Background())
+		if err != nil {
+			_ = durable.Close()
+			if ownedStore {
+				_ = store.Close()
+			}
+			return nil, fmt.Errorf("gateway: durable artifacts: %w", err)
+		}
+		// Complete catalog-driven deletion before reconciling unknown files. A
+		// pending row is authoritative ownership metadata; only after the
+		// physical file is gone may it be removed from the catalog.
+		if pending, e := durable.PendingBlobDeletes(context.Background()); e != nil {
+			_ = durable.Close()
+			if ownedStore {
+				_ = store.Close()
+			}
+			return nil, fmt.Errorf("gateway: durable blob deletes: %w", e)
+		} else {
+			for _, b := range pending {
+				if e := store.RemoveContentAddressedBlob(context.Background(), b.StorageRef); e == nil || errors.Is(e, persistence.ErrNotFound) {
+					_ = durable.MarkBlobDeleted(context.Background(), b.StorageRef)
+				} else if !errors.Is(e, persistence.ErrStoreFull) {
+					// Preserve the pending row for a later retry; startup remains
+					// available when an external file is temporarily inaccessible.
+				}
+			}
+		}
+		referenced := make(map[string]struct{}, len(refs))
+		for _, a := range refs {
+			referenced[a.StorageRef] = struct{}{}
+		}
+		if _, e := store.ReconcileSpill(context.Background(), referenced, 256); e != nil {
+			_ = durable.Close()
+			if ownedStore {
+				_ = store.Close()
+			}
+			return nil, fmt.Errorf("gateway: reconcile durable blobs: %w", e)
+		}
+		for _, a := range refs {
+			if err := store.Adopt(context.Background(), wire.ArtifactRef{ArtifactID: a.ID, Stage: a.Stage, Direction: a.Direction, ContentType: a.ContentType, ContentEncoding: a.ContentEncoding, Size: a.Size, SHA256: a.SHA256, Complete: a.Complete, StorageRef: a.StorageRef}, persistence.StorageRef{Key: a.StorageRef}); err != nil {
+				_ = durable.Close()
+				if ownedStore {
+					_ = store.Close()
+				}
+				return nil, fmt.Errorf("gateway: restore artifact %s: %w", a.ID, err)
+			}
 		}
 	}
 
 	return &Gateway{
-		upstream:            upstream,
-		registry:            registry,
-		store:               store,
-		policy:              polStore,
-		maxBody:             cfg.MaxBodyBytes,
-		observer:           cfg.Events,
-		clientAuth:          cfg.ClientAuth,
+		upstream:             upstream,
+		registry:             registry,
+		store:                store,
+		catalog:              durable,
+		policy:               polStore,
+		maxBody:              cfg.MaxBodyBytes,
+		analysisLimit:        cfg.AnalysisBudget,
+		observer:             cfg.Events,
+		clientAuth:           cfg.ClientAuth,
 		responseDrainTimeout: drainTimeout,
-		subs:                make(map[uint64]func(exchange.Event)),
-		sessions:            session.NewIndex(cfg.SessionMaxPositions),
+		subs:                 make(map[uint64]func(exchange.Event)),
+		sessions: func() *session.Index {
+			ix := session.NewIndex(cfg.SessionMaxPositions)
+			ix.Hydrate(hydrated)
+			return ix
+		}(),
 	}, nil
 }
 
@@ -226,7 +358,85 @@ func NewRuntime(cfg Config) (*Gateway, *exchange.Registry, *persistence.Store, *
 	return NewHandler(cfg)
 }
 
-// Registry returns the shared exchange registry.
+// ClearQueue removes the current exchange, artifact, and session indexes
+// while keeping the gateway usable for new requests. It is an operator-side
+// workspace action and never enters the proxy forwarding path.
+func (g *Gateway) ClearQueue(ctx context.Context) error {
+	if g == nil || g.registry == nil || g.store == nil || g.sessions == nil {
+		return errors.New("gateway: queue unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := contextError(ctx); err != nil {
+		return err
+	}
+	// Serialize workspace reset with ingress registration and durable event writes.
+	// Body capture remains outside this lock, so Clear can proceed while a client
+	// is blocked; the store epoch rejects that pre-clear writer at commit.
+	g.ingressMu.Lock()
+	defer g.ingressMu.Unlock()
+	g.generation.Add(1)
+	if err := g.registry.Clear(); err != nil {
+		return err
+	}
+	g.sessions.Clear()
+	if err := g.store.Clear(ctx); err != nil {
+		return err
+	}
+	if g.catalog != nil {
+		g.durableErrMu.Lock()
+		defer g.durableErrMu.Unlock()
+		if err := g.catalog.Clear(ctx); err != nil {
+			return err
+		}
+		// Catalog deletion is a two-phase protocol: remove the external file
+		// first, then acknowledge the metadata row. Busy files remain pending.
+		pending, err := g.catalog.PendingBlobDeletes(ctx)
+		if err != nil {
+			return err
+		}
+		for _, b := range pending {
+			if err := g.store.RemoveContentAddressedBlob(ctx, b.StorageRef); err == nil || errors.Is(err, persistence.ErrNotFound) {
+				_ = g.catalog.MarkBlobDeleted(ctx, b.StorageRef)
+			}
+		}
+	}
+	return nil
+}
+
+// DurableError reports the most recent catalog persistence failure, if any.
+func (g *Gateway) DurableError() error {
+	if g == nil {
+		return nil
+	}
+	g.durableErrMu.Lock()
+	defer g.durableErrMu.Unlock()
+	return g.durableErr
+}
+
+func (g *Gateway) Close() error {
+	if g == nil {
+		return nil
+	}
+	// Invalidate callbacks racing shutdown/queue clear before closing durable
+	// handles. Persistence failures are diagnostic only and must never alter
+	// normal proxy traffic.
+	g.generation.Add(1)
+	var first error
+	if g.catalog != nil {
+		g.durableErrMu.Lock()
+		first = g.catalog.Close()
+		g.durableErrMu.Unlock()
+	}
+	if g.store != nil {
+		if err := g.store.Close(); first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
 func (g *Gateway) Registry() *exchange.Registry {
 	if g == nil {
 		return nil
@@ -305,30 +515,45 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture outside the ingress lock so Clear can invalidate blocked captures.
+	requestGeneration := g.generation.Load()
 	requestArtifact, err := g.captureRequest(r)
 	if err != nil {
+		// captureStored may have committed an incomplete artifact before
+		// reporting a request-body read/limit error. Request capture owns that
+		// artifact until ingress succeeds, so remove it on every error path.
+		// Cleanup is best-effort and must never replace the original error.
+		if id := requestArtifact.Ref().ArtifactID; id != "" {
+			_ = g.store.Delete(context.Background(), id)
+		}
 		g.writeCaptureError(w, err)
 		return
 	}
-	if err := g.putArtifact(requestArtifact); err != nil {
-		g.writeStoreError(w, err)
+	if requestGeneration != g.generation.Load() {
+		_ = g.store.Delete(context.Background(), requestArtifact.Ref().ArtifactID)
+		g.writeCaptureError(w, persistence.ErrStaleArtifact)
 		return
 	}
+	// captureRequest commits directly to the store and returns a lazy handle.
 
 	requestEnvelope := wire.RequestFromHTTP(r)
-	protocol := detectProtocol(requestEnvelope, requestArtifact.Bytes())
-	// Summary and session placement are additive observations of the original
-	// inbound bytes. They are computed after capture and never become
-	// transport input; an unparseable or non-chat body yields empty facts
-	// that are dropped.
-	analysis := session.AnalyzeRequest(inspection.Protocol(protocol), requestArtifact.Bytes())
+	preview := artifactPreview(requestArtifact, 64*1024)
+	protocol := detectProtocol(requestEnvelope, preview)
+	// Analyze through the lazy artifact reader with a hard memory budget. The
+	// preview is used only for protocol detection; it is never treated as a
+	// complete request for session identity.
+	var analysis session.RequestAnalysis
+	if reader, openErr := requestArtifact.OpenReader(); openErr == nil {
+		analysis, _ = session.AnalyzeRequestReader(inspection.Protocol(protocol), reader, g.analysisBudget())
+		_ = reader.Close()
+	}
 	var summary *session.Summary
 	if !analysis.Summary.Empty() {
 		summary = &analysis.Summary
 	}
 	exchangeID := exchange.NewExchangeID()
 	var placement *session.Assignment
-	if session.IsChatProtocol(inspection.Protocol(protocol)) {
+	if session.IsChatProtocol(inspection.Protocol(protocol)) && analysis.AnalysisComplete {
 		assignment := g.sessions.Assign(exchangeID, session.RequestFacts{
 			Protocol:           inspection.Protocol(protocol),
 			MessageDigests:     analysis.MessageDigests,
@@ -357,6 +582,13 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return g.writeDownstream(ctx, w, resp, committed)
 	}
 
+	g.ingressMu.RLock()
+	if requestGeneration != g.generation.Load() {
+		g.ingressMu.RUnlock()
+		_ = g.store.Delete(context.Background(), requestArtifact.Ref().ArtifactID)
+		g.writeCaptureError(w, persistence.ErrStaleArtifact)
+		return
+	}
 	e, err := g.registry.Create(exchange.CreateParams{
 		ExchangeID:      exchangeID,
 		Protocol:        protocol,
@@ -370,6 +602,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Summary:         summary,
 		Session:         placement,
 	})
+	g.ingressMu.RUnlock()
 	if err != nil {
 		g.writeStoreError(w, err)
 		return
@@ -402,68 +635,134 @@ func (g *Gateway) captureRequest(r *http.Request) (wire.BodyArtifact, error) {
 	if body == nil {
 		body = http.NoBody
 	}
-	artifact, err := captureReadCloser(r.Context(), body, wire.CaptureOptions{
-		ArtifactOptions: wire.ArtifactOptions{
-			Stage:           wire.StageRequestInbound,
-			Direction:       wire.DirectionInbound,
-			ContentType:     r.Header.Get("Content-Type"),
-			ContentEncoding: r.Header.Get("Content-Encoding"),
-		},
-		MaxBytes: g.maxBody,
-	})
-	if err != nil {
-		return artifact, err
+	return captureStored(r.Context(), g.store, body, wire.ArtifactOptions{
+		Stage: wire.StageRequestInbound, Direction: wire.DirectionInbound,
+		ContentType: r.Header.Get("Content-Type"), ContentEncoding: r.Header.Get("Content-Encoding"),
+	}, g.maxBody)
+}
+
+// captureStored spools bytes directly into the artifact repository. No body
+// slice is retained on ordinary forwarding paths; the returned artifact is lazy.
+func captureStored(ctx context.Context, store *persistence.Store, body io.ReadCloser, opts wire.ArtifactOptions, max int64) (wire.BodyArtifact, error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	if !artifact.Ref().Complete {
-		return artifact, errors.New("gateway: request capture incomplete")
+	if body == nil {
+		body = http.NoBody
+	}
+	defer body.Close()
+	stopClose := make(chan struct{})
+	defer close(stopClose)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = body.Close()
+		case <-stopClose:
+		}
+	}()
+	writer, err := store.BeginWriter(ctx, opts)
+	if err != nil {
+		return wire.BodyArtifact{}, err
+	}
+	buf := make([]byte, 32*1024)
+	complete := false
+	var readErr error
+	var size int64
+	for {
+		if err := contextError(ctx); err != nil {
+			readErr = err
+			break
+		}
+		n, er := body.Read(buf)
+		if n > 0 {
+			if max > 0 && size+int64(n) > max {
+				allowed := max - size
+				if allowed > 0 {
+					_, _ = writer.Write(buf[:allowed])
+					size += allowed
+				}
+				readErr = wire.ErrCaptureLimit
+				break
+			}
+			if _, err := writer.Write(buf[:n]); err != nil {
+				readErr = err
+				break
+			}
+			size += int64(n)
+		}
+		if er != nil {
+			if errors.Is(er, io.EOF) {
+				complete = true
+			} else {
+				readErr = er
+			}
+			break
+		}
+	}
+	ref, commitErr := writer.Commit(context.Background(), complete)
+	if commitErr != nil {
+		return wire.BodyArtifact{}, commitErr
+	}
+	artifact, lazyErr := store.Lazy(context.Background(), ref.ArtifactID)
+	if lazyErr != nil {
+		return wire.BodyArtifact{}, lazyErr
+	}
+	if readErr != nil {
+		return artifact, readErr
 	}
 	return artifact, nil
 }
 
-// captureReadCloser closes body on cancellation so a custom/local response
-// body that blocks in Read cannot keep an exchange alive after disconnect.
-func captureReadCloser(ctx context.Context, body io.ReadCloser, opts wire.CaptureOptions) (wire.BodyArtifact, error) {
-	if body == nil {
-		body = http.NoBody
+func (g *Gateway) analysisBudget() int64 {
+	if g == nil || g.analysisLimit <= 0 {
+		return session.DefaultAnalysisBudget
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	return g.analysisLimit
+}
+func artifactPreview(a wire.BodyArtifact, limit int64) []byte {
+	if limit <= 0 {
+		return nil
 	}
-	type result struct {
-		artifact wire.BodyArtifact
-		err      error
+	r, err := a.OpenReader()
+	if err != nil {
+		return nil
 	}
-	resultCh := make(chan result, 1)
-	go func() {
-		a, err := wire.CaptureReaderContext(ctx, body, opts)
-		resultCh <- result{artifact: a, err: err}
-	}()
-	select {
-	case got := <-resultCh:
-		_ = body.Close()
-		return got.artifact, got.err
-	case <-ctx.Done():
-		_ = body.Close()
-		got := <-resultCh
-		if got.err == nil {
-			got.err = ctx.Err()
-		}
-		return got.artifact, got.err
-	}
+	defer r.Close()
+	b, _ := io.ReadAll(io.LimitReader(r, limit))
+	return b
 }
 
 func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exchange.UpstreamRequest, w http.ResponseWriter, committed *writeState, directWritten *atomic.Bool, direct bool, protocol string) (exchange.UpstreamResponse, error) {
 	if err := contextError(ctx); err != nil {
 		return exchange.UpstreamResponse{}, err
 	}
-	// The exchange interface carries the original inbound artifact but has no
-	// explicit request.upstream artifact slot. Retain a distinct immutable copy
-	// in the shared store so workspace users can compare both legs.
-	upstreamArtifact := copyArtifact(req.Artifact, wire.StageRequestUpstream, wire.DirectionUpstream)
-	if err := g.putArtifact(upstreamArtifact); err != nil {
-		return exchange.UpstreamResponse{}, err
+	gen := g.generation.Load()
+	// Reject work invalidated by Clear before creating fresh references.
+	if gen != g.generation.Load() {
+		return exchange.UpstreamResponse{}, persistence.ErrStaleArtifact
 	}
-	if err := g.registry.AddArtifactRef(req.ExchangeID, true, upstreamArtifact.Ref()); err != nil {
+	// The inbound request was persisted at ingress. Link its immutable blob for
+	// the upstream-stage reference; this avoids reading/copying the body. The
+	// legacy fallback is only for callers constructing an unpersisted artifact.
+	upstreamRef, err := g.store.Link(context.Background(), req.Artifact.Ref().ArtifactID, wire.ArtifactOptions{
+		Stage: wire.StageRequestUpstream, Direction: wire.DirectionUpstream,
+		ContentType: req.Artifact.Ref().ContentType, ContentEncoding: req.Artifact.Ref().ContentEncoding,
+	})
+	if err != nil {
+		if !errors.Is(err, persistence.ErrNotFound) {
+			return exchange.UpstreamResponse{}, err
+		}
+		upstreamArtifact := copyArtifact(req.Artifact, wire.StageRequestUpstream, wire.DirectionUpstream)
+		if err := g.putArtifact(upstreamArtifact); err != nil {
+			return exchange.UpstreamResponse{}, err
+		}
+		upstreamRef = upstreamArtifact.Ref()
+	}
+	if gen != g.generation.Load() {
+		_ = g.store.Delete(context.Background(), upstreamRef.ArtifactID)
+		return exchange.UpstreamResponse{}, persistence.ErrStaleArtifact
+	}
+	if err := g.registry.AddArtifactRef(req.ExchangeID, true, upstreamRef); err != nil {
 		return exchange.UpstreamResponse{}, err
 	}
 
@@ -517,7 +816,7 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 				// The client is gone. Unless the terminal record already reached
 				// it (the response then drains to a completed artifact), the
 				// upstream leg is released immediately.
-				if !tap.isTerminalDelivered() {
+				if !tap.isTerminalDelivered() && tap.terminalEnd == 0 {
 					upCancel()
 				}
 			case <-stopWatch:
@@ -528,48 +827,42 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 	if direct {
 		streamed, err := g.captureAndStream(ctx, req.ExchangeID, resp, w, committed, tap, upCancel)
 		if err != nil {
-			// The bytes already streamed to the client stay inspectable even
-			// when the stream was cut short (client disconnect or write
-			// failure): retain the partial capture instead of dropping it.
-			g.retainPartialResponse(req.ExchangeID, streamed.artifact, protocol, true)
-			return exchange.UpstreamResponse{}, err
+			// Once the scanner has observed a terminal record and its bytes were
+			// delivered, client cancellation is a successful exchange outcome;
+			// preserve the captured artifact even if the transport closes during
+			// the final drain read.
+			if tap != nil && tap.terminalEnd > 0 && streamed.deliveredLen >= tap.terminalEnd && streamed.deliveredRef.ArtifactID != "" {
+				err = nil
+			} else {
+				// The bytes already streamed to the client stay inspectable even
+				// when the stream was cut short (client disconnect or write
+				// failure): retain the partial capture instead of dropping it.
+				var deliveredRef *wire.ArtifactRef
+				if streamed.deliveredRef.ArtifactID != "" {
+					deliveredRef = &streamed.deliveredRef
+				}
+				g.retainPartialResponseRef(req.ExchangeID, streamed.artifact, protocol, deliveredRef)
+				return exchange.UpstreamResponse{}, err
+			}
 		}
 		directWritten.Store(true)
-		downstreamOpts := wire.ArtifactOptions{
-			Stage:           wire.StageResponseDownstream,
-			Direction:       wire.DirectionDownstream,
-			ContentType:     resp.Header.Get("Content-Type"),
-			ContentEncoding: resp.Header.Get("Content-Encoding"),
-		}
 		// The downstream copy is exactly the bytes that reached the client;
-		// a post-terminal drain can leave the upstream capture longer than
-		// the delivered prefix when the client hung up first.
-		var downstreamArtifact wire.BodyArtifact
-		if streamed.artifact.Ref().Complete {
-			downstreamArtifact = wire.NewArtifact(streamed.delivered, downstreamOpts)
-		} else {
-			downstreamArtifact = wire.NewIncompleteArtifact(streamed.delivered, downstreamOpts)
+		// captureAndStream commits that prefix directly with the downstream
+		// stage and StorageRef. Reuse that exact reference rather than linking
+		// the upstream artifact (which would leave the delivered entry orphaned).
+		downstreamRef := streamed.deliveredRef
+		if downstreamRef.ArtifactID == "" {
+			return exchange.UpstreamResponse{}, errors.New("gateway: downstream capture unavailable")
 		}
-		if err := g.putArtifact(downstreamArtifact); err != nil {
+		if err := g.registry.AddArtifactRef(req.ExchangeID, false, downstreamRef); err != nil {
 			return exchange.UpstreamResponse{}, err
 		}
-		if err := g.registry.AddArtifactRef(req.ExchangeID, false, downstreamArtifact.Ref()); err != nil {
-			return exchange.UpstreamResponse{}, err
-		}
-		g.noteContextTokens(req.ExchangeID, protocol, streamed.artifact.Bytes())
-		g.noteResponseID(req.ExchangeID, protocol, streamed.artifact.Bytes())
+		g.noteContextTokens(req.ExchangeID, protocol, artifactPreview(streamed.artifact, 256*1024))
+		g.noteResponseID(req.ExchangeID, protocol, artifactPreview(streamed.artifact, 256*1024))
 		return exchange.UpstreamResponse{Envelope: envelopeWithTimes(resp, started), Artifact: streamed.artifact}, nil
 	}
 
-	artifact, err := captureReadCloser(ctx, resp.Body, wire.CaptureOptions{
-		ArtifactOptions: wire.ArtifactOptions{
-			Stage:           wire.StageResponseUpstream,
-			Direction:       wire.DirectionUpstream,
-			ContentType:     resp.Header.Get("Content-Type"),
-			ContentEncoding: resp.Header.Get("Content-Encoding"),
-		},
-		MaxBytes: g.maxBody,
-	})
+	artifact, err := captureStored(ctx, g.store, resp.Body, wire.ArtifactOptions{Stage: wire.StageResponseUpstream, Direction: wire.DirectionUpstream, ContentType: resp.Header.Get("Content-Type"), ContentEncoding: resp.Header.Get("Content-Encoding")}, g.maxBody)
 	if err != nil {
 		// The captured prefix of the upstream response remains available for
 		// review even though the leg was interrupted.
@@ -579,8 +872,8 @@ func (g *Gateway) roundTrip(ctx context.Context, inbound *http.Request, req exch
 	if !artifact.Ref().Complete {
 		return exchange.UpstreamResponse{}, errors.New("gateway: response capture incomplete")
 	}
-	g.noteContextTokens(req.ExchangeID, protocol, artifact.Bytes())
-	g.noteResponseID(req.ExchangeID, protocol, artifact.Bytes())
+	g.noteContextTokens(req.ExchangeID, protocol, artifactPreview(artifact, 256*1024))
+	g.noteResponseID(req.ExchangeID, protocol, artifactPreview(artifact, 256*1024))
 	return exchange.UpstreamResponse{
 		Envelope: envelopeWithTimes(resp, started),
 		Artifact: artifact,
@@ -615,9 +908,10 @@ func envelopeWithTimes(resp *http.Response, started time.Time) wire.ResponseEnve
 // upstream capture (the response artifact) and the byte prefix that actually
 // reached the client.
 type streamOutcome struct {
-	artifact  wire.BodyArtifact
-	envelope  wire.ResponseEnvelope
-	delivered []byte
+	artifact     wire.BodyArtifact
+	envelope     wire.ResponseEnvelope
+	deliveredLen int64
+	deliveredRef wire.ArtifactRef
 }
 
 // captureAndStream performs a byte-for-byte response copy while retaining a
@@ -639,13 +933,22 @@ func (g *Gateway) captureAndStream(ctx context.Context, exchangeID string, resp 
 	if flusher != nil {
 		flusher.Flush()
 	}
-
-	var captured bytes.Buffer
+	upOpts := wire.ArtifactOptions{Stage: wire.StageResponseUpstream, Direction: wire.DirectionUpstream, ContentType: resp.Header.Get("Content-Type"), ContentEncoding: resp.Header.Get("Content-Encoding")}
+	downOpts := wire.ArtifactOptions{Stage: wire.StageResponseDownstream, Direction: wire.DirectionDownstream, ContentType: resp.Header.Get("Content-Type"), ContentEncoding: resp.Header.Get("Content-Encoding")}
+	upWriter, err := g.store.BeginWriter(context.Background(), upOpts)
+	if err != nil {
+		return streamOutcome{}, err
+	}
+	downWriter, err := g.store.BeginWriter(context.Background(), downOpts)
+	if err != nil {
+		_ = upWriter.Abort()
+		return streamOutcome{}, err
+	}
+	captured := int64(0)
+	delivered := int64(0)
 	captureIncomplete := false
-	buf := make([]byte, 32*1024)
-	var delivered int64 // bytes written toward the client
-	draining := false   // terminal record delivered; the drain timeout bounds the rest
-	clientGone := false // a drain-mode write already failed; stop writing
+	downIncomplete := false
+	draining, clientGone := false, false
 	var drainTimer *time.Timer
 	var drainTimedOut atomic.Bool
 	defer func() {
@@ -653,85 +956,109 @@ func (g *Gateway) captureAndStream(ctx context.Context, exchangeID string, resp 
 			drainTimer.Stop()
 		}
 	}()
-	outcome := func(artifact wire.BodyArtifact) streamOutcome {
-		deliveredBytes := artifact.Bytes()
-		if int64(len(deliveredBytes)) > delivered {
-			deliveredBytes = deliveredBytes[:delivered]
+	finish := func(complete bool, retErr error) (streamOutcome, error) {
+		// Always finalize both legs exactly once, including cancellation and
+		// writer failures. A committed incomplete ref is preferable to a
+		// dangling capture and remains useful for inspection.
+		upRef, ce := upWriter.Commit(context.Background(), complete && !captureIncomplete)
+		if ce != nil {
+			_ = downWriter.Abort()
+			return streamOutcome{}, ce
 		}
-		return streamOutcome{artifact: artifact, envelope: envelopeWithTimes(resp, started), delivered: deliveredBytes}
+		downComplete := complete && !captureIncomplete && !downIncomplete
+		downRef, de := downWriter.Commit(context.Background(), downComplete)
+		artifact, le := g.store.Lazy(context.Background(), upRef.ArtifactID)
+		if le != nil {
+			return streamOutcome{}, le
+		}
+		if de != nil {
+			// The upstream ref is already committed; return it so callers can
+			// retain it even when the downstream leg cannot be committed.
+			return streamOutcome{artifact: artifact, envelope: envelopeWithTimes(resp, started), deliveredLen: delivered}, de
+		}
+		return streamOutcome{artifact: artifact, envelope: envelopeWithTimes(resp, started), deliveredLen: delivered, deliveredRef: downRef}, retErr
 	}
+	buf := make([]byte, 32*1024)
 	for {
+		// A disconnect can race the write that crosses the terminal boundary.
+		// Re-check the tap before honoring cancellation so the already-delivered
+		// terminal record still enters the post-terminal drain path.
+		if !draining && tap != nil && (tap.isTerminalDelivered() || (tap.terminalEnd > 0 && delivered >= tap.terminalEnd)) {
+			draining = true
+			drainTimer = time.AfterFunc(g.responseDrainTimeout, func() { drainTimedOut.Store(true); upCancel() })
+		}
 		if !draining {
-			if err := contextError(ctx); err != nil {
-				return outcome(incompleteResponseArtifact(resp, captured.Bytes())), err
+			if e := contextError(ctx); e != nil {
+				// The scanner may observe the terminal record just before the
+				// downstream write and client cancellation. Finish that chunk and
+				// drain rather than misclassifying the exchange as cancelled.
+				if tap == nil || tap.terminalEnd == 0 {
+					return finish(false, e)
+				}
+				draining = true
+				drainTimer = time.AfterFunc(g.responseDrainTimeout, func() { drainTimedOut.Store(true); upCancel() })
 			}
 		}
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if !captureIncomplete {
-				if g.maxBody > 0 && int64(captured.Len()+n) > g.maxBody {
-					remaining := int(g.maxBody - int64(captured.Len()))
-					if remaining > 0 {
-						_, _ = captured.Write(buf[:remaining])
+				allowed := n
+				if g.maxBody > 0 && captured+int64(allowed) > g.maxBody {
+					allowed = int(g.maxBody - captured)
+					if allowed < 0 {
+						allowed = 0
 					}
 					captureIncomplete = true
-				} else {
-					_, _ = captured.Write(buf[:n])
+				}
+				if allowed > 0 {
+					if _, e := upWriter.Write(buf[:allowed]); e != nil {
+						captureIncomplete = true
+					}
+					captured += int64(allowed)
 				}
 			}
 			if !clientGone {
 				written, writeErr := w.Write(buf[:n])
-				if writeErr == nil && written == n {
+				if written > 0 {
+					if _, e := downWriter.Write(buf[:written]); e != nil {
+						downIncomplete = true
+					}
 					delivered += int64(written)
-					tap.markTerminalDelivered(delivered)
-					if !draining && tap.isTerminalDelivered() {
+				}
+				if writeErr == nil && written == n {
+					if tap != nil {
+						tap.markTerminalDelivered(delivered)
+					}
+					if !draining && tap != nil && (tap.isTerminalDelivered() || (tap.terminalEnd > 0 && delivered >= tap.terminalEnd)) {
 						draining = true
-						drainTimer = time.AfterFunc(g.responseDrainTimeout, func() {
-							drainTimedOut.Store(true)
-							upCancel()
-						})
+						drainTimer = time.AfterFunc(g.responseDrainTimeout, func() { drainTimedOut.Store(true); upCancel() })
 					}
 					if flusher != nil {
 						flusher.Flush()
 					}
 				} else if !draining {
-					// A pre-terminal write failure or short write is a genuine
-					// interruption of the exchange.
-					if writeErr != nil {
-						return outcome(incompleteResponseArtifact(resp, captured.Bytes())), writeErr
+					if writeErr == nil {
+						writeErr = io.ErrShortWrite
 					}
-					return outcome(incompleteResponseArtifact(resp, captured.Bytes())), io.ErrShortWrite
+					return finish(false, writeErr)
 				} else {
-					// After the terminal record a write failure only means the
-					// client hung up; keep draining for the artifact.
 					clientGone = true
 				}
 			}
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
-				var artifact wire.BodyArtifact
-				if captureIncomplete {
-					artifact = incompleteResponseArtifact(resp, captured.Bytes())
-				} else {
-					artifact = wire.NewArtifact(captured.Bytes(), wire.ArtifactOptions{
-						Stage: wire.StageResponseUpstream, Direction: wire.DirectionUpstream,
-						ContentType: resp.Header.Get("Content-Type"), ContentEncoding: resp.Header.Get("Content-Encoding"),
-					})
-				}
 				finalEnvelope := wire.ResponseFromHTTP(resp, started, time.Now().UTC())
 				setResponseTrailers(w, finalEnvelope.Trailers)
-				result := outcome(artifact)
-				result.envelope = finalEnvelope
-				return result, nil
+				out, e := finish(true, nil)
+				out.envelope = finalEnvelope
+				return out, e
 			}
 			if draining {
-				// The terminal record already reached the client, so an
-				// upstream read failure now only affects artifact completeness.
 				g.noteDrainWarning(exchangeID, drainTimedOut.Load())
-				return outcome(incompleteResponseArtifact(resp, captured.Bytes())), nil
+				return finish(false, nil)
 			}
-			return outcome(incompleteResponseArtifact(resp, captured.Bytes())), readErr
+			return finish(false, readErr)
 		}
 	}
 }
@@ -749,13 +1076,6 @@ func (g *Gateway) noteDrainWarning(exchangeID string, timedOut bool) {
 	}
 }
 
-func incompleteResponseArtifact(resp *http.Response, body []byte) wire.BodyArtifact {
-	return wire.NewIncompleteArtifact(body, wire.ArtifactOptions{
-		Stage: wire.StageResponseUpstream, Direction: wire.DirectionUpstream,
-		ContentType: resp.Header.Get("Content-Type"), ContentEncoding: resp.Header.Get("Content-Encoding"),
-	})
-}
-
 // retainPartialResponse preserves the observed bytes of an interrupted
 // response leg. A cancelled exchange keeps whatever the upstream sent
 // (response.upstream) and, when the direct path already streamed those bytes
@@ -764,7 +1084,17 @@ func incompleteResponseArtifact(resp *http.Response, body []byte) wire.BodyArtif
 // observation-only: failures are dropped because they must never change the
 // transport error reported to the exchange.
 func (g *Gateway) retainPartialResponse(exchangeID string, artifact wire.BodyArtifact, protocol string, streamedDownstream bool) {
-	if g == nil || g.registry == nil || artifact.Len() == 0 {
+	var downstreamRef *wire.ArtifactRef
+	if streamedDownstream {
+		if ref := artifact.Ref(); ref.ArtifactID != "" {
+			downstreamRef = &ref
+		}
+	}
+	g.retainPartialResponseRef(exchangeID, artifact, protocol, downstreamRef)
+}
+
+func (g *Gateway) retainPartialResponseRef(exchangeID string, artifact wire.BodyArtifact, protocol string, downstreamRef *wire.ArtifactRef) {
+	if g == nil || g.registry == nil || artifact.Ref().ArtifactID == "" {
 		return
 	}
 	_ = g.registry.AddWarnings(exchangeID, "response stream interrupted; partial response retained")
@@ -774,14 +1104,23 @@ func (g *Gateway) retainPartialResponse(exchangeID string, artifact wire.BodyArt
 	if err := g.registry.AddArtifactRef(exchangeID, false, artifact.Ref()); err != nil {
 		return
 	}
-	if streamedDownstream {
-		downstream := copyArtifact(artifact, wire.StageResponseDownstream, wire.DirectionDownstream)
-		if err := g.putArtifact(downstream); err == nil {
-			_ = g.registry.AddArtifactRef(exchangeID, false, downstream.Ref())
+	if downstreamRef != nil {
+		ref := *downstreamRef
+		if ref.Stage == wire.StageResponseDownstream {
+			_ = g.registry.AddArtifactRef(exchangeID, false, ref)
+			g.noteContextTokens(exchangeID, protocol, artifactPreview(artifact, 256*1024))
+			g.noteResponseID(exchangeID, protocol, artifactPreview(artifact, 256*1024))
+			return
+		}
+		// A legacy caller may provide only the upstream artifact. Link it
+		// without materializing the body.
+		linked, linkErr := g.store.Link(context.Background(), ref.ArtifactID, wire.ArtifactOptions{Stage: wire.StageResponseDownstream, Direction: wire.DirectionDownstream, ContentType: ref.ContentType, ContentEncoding: ref.ContentEncoding})
+		if linkErr == nil {
+			_ = g.registry.AddArtifactRef(exchangeID, false, linked)
 		}
 	}
-	g.noteContextTokens(exchangeID, protocol, artifact.Bytes())
-	g.noteResponseID(exchangeID, protocol, artifact.Bytes())
+	g.noteContextTokens(exchangeID, protocol, artifactPreview(artifact, 256*1024))
+	g.noteResponseID(exchangeID, protocol, artifactPreview(artifact, 256*1024))
 }
 
 func (g *Gateway) writeDownstream(ctx context.Context, w http.ResponseWriter, response exchange.DownstreamResponse, committed *writeState) error {
@@ -791,11 +1130,23 @@ func (g *Gateway) writeDownstream(ctx context.Context, w http.ResponseWriter, re
 	if !response.Artifact.Ref().Complete {
 		return errors.New("gateway: refusing incomplete response artifact")
 	}
-	downstreamArtifact := copyArtifact(response.Artifact, wire.StageResponseDownstream, wire.DirectionDownstream)
-	if err := g.putArtifact(downstreamArtifact); err != nil {
-		return err
+	downstreamRef, err := g.store.Link(context.Background(), response.Artifact.Ref().ArtifactID, wire.ArtifactOptions{
+		Stage: wire.StageResponseDownstream, Direction: wire.DirectionDownstream,
+		ContentType: response.Artifact.Ref().ContentType, ContentEncoding: response.Artifact.Ref().ContentEncoding,
+	})
+	if err != nil {
+		if !errors.Is(err, persistence.ErrNotFound) {
+			return err
+		}
+		// Legacy/unpersisted exchange artifacts may still arrive from direct
+		// callers; only that compatibility path materializes a copy.
+		downstreamArtifact := copyArtifact(response.Artifact, wire.StageResponseDownstream, wire.DirectionDownstream)
+		if err := g.putArtifact(downstreamArtifact); err != nil {
+			return err
+		}
+		downstreamRef = downstreamArtifact.Ref()
 	}
-	if err := g.registry.AddArtifactRef(response.ExchangeID, false, downstreamArtifact.Ref()); err != nil {
+	if err := g.registry.AddArtifactRef(response.ExchangeID, false, downstreamRef); err != nil {
 		return err
 	}
 	envelope := response.Envelope.Clone()
@@ -960,15 +1311,43 @@ func (g *Gateway) writeCaptureError(w http.ResponseWriter, err error) {
 }
 
 func (g *Gateway) writeStoreError(w http.ResponseWriter, err error) {
-	if errors.Is(err, context.Canceled) {
+	if err == nil {
+		http.Error(w, "artifact storage unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	http.Error(w, "gateway artifact store unavailable", http.StatusInsufficientStorage)
+	// A disconnected client has no response channel left to write. In
+	// particular, do not turn cancellation into a misleading storage failure.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return
+	}
+	status, message := http.StatusServiceUnavailable, "artifact storage unavailable"
+	switch {
+	case errors.Is(err, persistence.ErrArtifactTooLarge), errors.Is(err, wire.ErrCaptureLimit):
+		status, message = http.StatusRequestEntityTooLarge, "artifact exceeds configured size limit"
+	case errors.Is(err, persistence.ErrStoreFull):
+		status, message = http.StatusInsufficientStorage, "artifact storage quota exceeded"
+	case errors.Is(err, persistence.ErrMemoryLimit):
+		status, message = http.StatusInsufficientStorage, "artifact storage memory limit exceeded; configure spill storage"
+	case errors.Is(err, persistence.ErrClosed):
+		status, message = http.StatusServiceUnavailable, "artifact storage is closed"
+	case errors.Is(err, persistence.ErrInvalidArtifact),
+		errors.Is(err, persistence.ErrInvalidArtifactID),
+		errors.Is(err, persistence.ErrInvalidRange),
+		errors.Is(err, persistence.ErrInvalidConfig),
+		errors.Is(err, wire.ErrInvalidCaptureLimit):
+		status, message = http.StatusBadRequest, "invalid artifact storage request"
+	}
+	http.Error(w, message, status)
 }
 
 func (g *Gateway) putArtifact(artifact wire.BodyArtifact) error {
 	if g == nil || g.store == nil || artifact.Ref().ArtifactID == "" {
 		return errors.New("gateway: artifact store unavailable")
+	}
+	// CaptureWriter-backed lazy artifacts are already committed. Checking
+	// metadata first avoids materializing their full body merely to re-save it.
+	if _, err := g.store.Metadata(context.Background(), artifact.Ref().ArtifactID); err == nil {
+		return nil
 	}
 	_, err := g.store.PutArtifact(artifact)
 	if errors.Is(err, persistence.ErrArtifactExists) {
@@ -1010,18 +1389,77 @@ func (g *Gateway) noteResponseID(exchangeID string, protocol string, body []byte
 	}
 	if responseID := session.ExtractResponseID(body); responseID != "" {
 		g.sessions.NoteResponseID(exchangeID, responseID)
+		if g.catalog != nil {
+			_ = g.catalog.SetResponseID(context.Background(), exchangeID, responseID)
+		}
 	}
 }
 
 func (g *Gateway) eventSink(event exchange.Event) {
-	// Exchange saves each referenced artifact before emitting its event. Mirror
-	// those refs into the persistence store for workspace artifact reads.
-	for _, ref := range event.ArtifactRefs {
-		if artifact, ok := g.registry.Artifact(ref.ArtifactID); ok {
-			_ = g.putArtifact(artifact)
+	// A cleared exchange is no longer registered; drop any late callback before
+	// it can reach durable storage or workspace subscribers.
+	if g == nil || g.registry == nil {
+		return
+	}
+	if _, ok := g.registry.Get(event.ExchangeID); !ok {
+		return
+	}
+	g.ingressMu.RLock()
+	defer g.ingressMu.RUnlock()
+	// Durable metadata is written from snapshots only; body bytes never enter SQLite.
+	gen := g.generation.Load()
+	// Stream events are realtime-only SSE observations. Persisting every token
+	// would amplify SQLite writes and grow the durable event log; the terminal
+	// snapshot/artifact event already records the durable state.
+	if event.Kind != exchange.EventStreamEvent && g.catalog != nil && gen == g.generation.Load() {
+		if e, ok := g.registry.Get(event.ExchangeID); ok {
+			s := e.Snapshot()
+			b, _ := json.Marshal(s)
+			sessionID := durableTrafficSession
+			position := int64(0)
+			var sess catalog.Session
+			if s.Session != nil {
+				sessionID = s.Session.SessionID
+				position = int64(s.Session.Depth)
+			}
+			// Session rows carry the latest snapshot ownership metadata. For
+			// non-chat traffic this is the documented synthetic owner above.
+			policyBytes, _ := json.Marshal(s.Policy)
+			sess = catalog.Session{ID: sessionID, CreatedAt: s.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: s.UpdatedAt.Format(time.RFC3339Nano), State: string(s.State), Revision: int64(s.Revision), Policy: string(policyBytes), Position: position}
+			var refs []catalog.ArtifactRef
+			for _, ref := range event.ArtifactRefs {
+				sr := ref.StorageRef
+				if sr == "" {
+					sr = ref.ArtifactID
+				}
+				refs = append(refs, catalog.ArtifactRef{ID: ref.ArtifactID, ExchangeID: s.ExchangeID, Stage: ref.Stage, Direction: ref.Direction, ContentType: ref.ContentType, ContentEncoding: ref.ContentEncoding, Size: ref.Size, SHA256: ref.SHA256, Complete: ref.Complete, StorageRef: sr})
+			}
+			meta, _ := json.Marshal(struct {
+				ExchangeID string             `json:"exchange_id"`
+				Revision   uint64             `json:"revision"`
+				Kind       exchange.EventKind `json:"kind"`
+			}{event.ExchangeID, event.Revision, event.Kind})
+			summaryBytes, _ := json.Marshal(s.Summary)
+			g.durableErrMu.Lock()
+			if gen != g.generation.Load() {
+				g.durableErrMu.Unlock()
+				return
+			}
+			err := g.catalog.UpsertSnapshot(context.Background(), sess, catalog.Exchange{ID: s.ExchangeID, SessionID: sessionID, Position: int(position), Protocol: s.Protocol, Method: s.Request.Envelope.Method, Path: s.Request.Envelope.Path, Status: s.Response.Envelope.Status, CreatedAt: s.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: s.UpdatedAt.Format(time.RFC3339Nano), Envelope: string(b), Summary: string(summaryBytes)}, refs, catalog.Event{SessionID: sessionID, Kind: string(event.Kind), Metadata: string(meta)})
+			g.durableErrMu.Unlock()
+			if err != nil {
+				// Keep the diagnostic deliberately stable and secret-free. The
+				// underlying error may include a local path or SQL detail.
+				g.durableErrMu.Lock()
+				g.durableErr = ErrDurablePersistence
+				g.durableErrMu.Unlock()
+			}
 		}
 	}
 	if g.observer != nil {
+		if _, ok := g.registry.Get(event.ExchangeID); !ok {
+			return
+		}
 		g.observer(event)
 	}
 	g.subMu.RLock()

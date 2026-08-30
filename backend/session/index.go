@@ -24,16 +24,20 @@ const positionDomain = "ctxlens-pos/v1"
 // its snapshot. Structure comes from the original inbound request (harness
 // behaviour); it never changes after capture.
 type Assignment struct {
-	SessionID        string `json:"session_id"`
-	Depth            int    `json:"depth"`
-	Position         string `json:"position,omitempty"`
-	ParentPosition   string `json:"parent_position,omitempty"`
-	ParentExchangeID string `json:"parent_exchange_id,omitempty"`
-	RepeatIndex      int    `json:"repeat_index,omitempty"`
-	Fork             bool   `json:"fork,omitempty"`
-	ModelChanged     bool   `json:"model_changed,omitempty"`
-	ToolsChanged     bool   `json:"tools_changed,omitempty"`
-	Root             bool   `json:"root,omitempty"`
+	SessionID          string   `json:"session_id"`
+	Depth              int      `json:"depth"`
+	Position           string   `json:"position,omitempty"`
+	ParentPosition     string   `json:"parent_position,omitempty"`
+	ParentExchangeID   string   `json:"parent_exchange_id,omitempty"`
+	RepeatIndex        int      `json:"repeat_index,omitempty"`
+	Fork               bool     `json:"fork,omitempty"`
+	ModelChanged       bool     `json:"model_changed,omitempty"`
+	ToolsChanged       bool     `json:"tools_changed,omitempty"`
+	Root               bool     `json:"root,omitempty"`
+	MessageDigests     []string `json:"message_digests,omitempty"`
+	Model              string   `json:"model,omitempty"`
+	ToolsDigest        string   `json:"tools_digest,omitempty"`
+	PreviousResponseID string   `json:"previous_response_id,omitempty"`
 }
 
 // Clone returns an independent copy for snapshot value semantics.
@@ -172,6 +176,22 @@ func (ix *Index) NoteResponseID(exchangeID, responseID string) {
 	}
 }
 
+// Clear discards all in-memory session placement and response-link state.
+// Session reconstruction intentionally has no persistence, so a queue reset
+// must also reset this index; the next chat request starts a fresh root.
+func (ix *Index) Clear() {
+	if ix == nil {
+		return
+	}
+	ix.mu.Lock()
+	ix.positions = make(map[string]*position)
+	ix.sessions = make(map[string]*sessionRecord)
+	ix.responses = make(map[string]*responseLink)
+	ix.exchanges = make(map[string]*exchangeRecord)
+	ix.sessionSeq = 0
+	ix.mu.Unlock()
+}
+
 // Stats is a metadata-only diagnostic for tests and operators.
 func (ix *Index) Stats() (positions, sessions int) {
 	ix.mu.Lock()
@@ -181,7 +201,7 @@ func (ix *Index) Stats() (positions, sessions int) {
 
 func (ix *Index) assignRootLocked(exchangeID string, facts RequestFacts, hashes []string, now time.Time) Assignment {
 	sessionID := ix.newSessionIDLocked(facts.Protocol, exchangeID, now)
-	assignment := Assignment{SessionID: sessionID, Depth: 1, Root: true}
+	assignment := Assignment{SessionID: sessionID, Depth: 1, Root: true, Model: facts.Model, ToolsDigest: facts.ToolsDigest, MessageDigests: append([]string(nil), facts.MessageDigests...), PreviousResponseID: facts.PreviousResponseID}
 	if len(hashes) > 0 {
 		assignment.Position = hashes[len(hashes)-1]
 		ix.registerTipLocked(sessionID, 1, exchangeID, facts, hashes[len(hashes)-1])
@@ -200,14 +220,18 @@ func (ix *Index) assignContinueLocked(exchangeID string, facts RequestFacts, has
 	tipHash := hashes[len(hashes)-1]
 	parent.successors[tipHash] = struct{}{}
 	assignment := Assignment{
-		SessionID:        parent.sessionID,
-		Depth:            depth,
-		Position:         tipHash,
-		ParentPosition:   hashes[deepest],
-		ParentExchangeID: parent.ownerExchangeID,
-		Fork:             fork,
-		ModelChanged:     facts.Model != parent.model,
-		ToolsChanged:     facts.ToolsDigest != parent.toolsDigest,
+		SessionID:          parent.sessionID,
+		Depth:              depth,
+		Position:           tipHash,
+		ParentPosition:     hashes[deepest],
+		ParentExchangeID:   parent.ownerExchangeID,
+		Fork:               fork,
+		ModelChanged:       facts.Model != parent.model,
+		ToolsChanged:       facts.ToolsDigest != parent.toolsDigest,
+		Model:              facts.Model,
+		ToolsDigest:        facts.ToolsDigest,
+		MessageDigests:     append([]string(nil), facts.MessageDigests...),
+		PreviousResponseID: facts.PreviousResponseID,
 	}
 	ix.registerTipLocked(parent.sessionID, depth, exchangeID, facts, tipHash)
 	ix.recordExchangeLocked(exchangeID, assignment, facts)
@@ -225,6 +249,8 @@ func (ix *Index) assignRepeatLocked(exchangeID string, facts RequestFacts, tipHa
 		RepeatIndex:  len(p.tipExchangeIDs),
 		ModelChanged: facts.Model != p.model,
 		ToolsChanged: facts.ToolsDigest != p.toolsDigest,
+		Model:        facts.Model, ToolsDigest: facts.ToolsDigest,
+		MessageDigests: append([]string(nil), facts.MessageDigests...), PreviousResponseID: facts.PreviousResponseID,
 	}
 	// A repeat of a known request is a rollout sibling: it shares the tree
 	// parent of the exchange that first occupied this position.
@@ -255,6 +281,8 @@ func (ix *Index) assignByResponseLocked(exchangeID string, facts RequestFacts, n
 			ParentExchangeID: link.exchangeID,
 			ModelChanged:     facts.Model != link.model,
 			ToolsChanged:     facts.ToolsDigest != link.toolsDigest,
+			Model:            facts.Model, ToolsDigest: facts.ToolsDigest,
+			MessageDigests: append([]string(nil), facts.MessageDigests...), PreviousResponseID: facts.PreviousResponseID,
 		}
 		ix.registerTipLocked(link.sessionID, link.depth+1, exchangeID, facts, tipHash)
 		ix.recordExchangeLocked(exchangeID, assignment, facts)
@@ -264,18 +292,73 @@ func (ix *Index) assignByResponseLocked(exchangeID string, facts RequestFacts, n
 	// Unknown previous_response_id: the conversation is foreign or was
 	// evicted; this request becomes a fresh session root at a stable position
 	// derived from the response id.
-	assignment := Assignment{SessionID: ix.newSessionIDLocked(facts.Protocol, exchangeID, now), Depth: 1, Root: true, Position: tipHash}
+	assignment := Assignment{SessionID: ix.newSessionIDLocked(facts.Protocol, exchangeID, now), Depth: 1, Root: true, Position: tipHash, Model: facts.Model, ToolsDigest: facts.ToolsDigest, MessageDigests: append([]string(nil), facts.MessageDigests...), PreviousResponseID: facts.PreviousResponseID}
 	ix.registerTipLocked(assignment.SessionID, 1, exchangeID, facts, tipHash)
 	ix.recordExchangeLocked(exchangeID, assignment, facts)
 	ix.evictIfNeededLocked()
 	return assignment
 }
 
-// registerTipLocked registers one request tip as a position. Intermediate
-// message prefixes are deliberately not registered: the next turn of an
-// append-only conversation always extends the previous turn's tip, so
-// tip-to-tip edges are both sufficient for matching and correct for turn
-// depth and fork attribution.
+// Hydrate restores durable placement metadata without reading artifact bodies.
+// Records must be ordered from roots toward leaves; duplicate exchanges are ignored.
+func (ix *Index) Hydrate(records []HydrationRecord) {
+	if ix == nil {
+		return
+	}
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	for _, r := range records {
+		a := r.Assignment
+		if a.SessionID == "" || r.ExchangeID == "" || a.Position == "" {
+			continue
+		}
+		if _, ok := ix.exchanges[r.ExchangeID]; ok {
+			continue
+		}
+		now := time.Now().UTC()
+		if _, ok := ix.sessions[a.SessionID]; !ok {
+			ix.sessions[a.SessionID] = &sessionRecord{protocol: r.Protocol, rootExchangeID: r.ExchangeID, createdAt: now, lastAccess: now}
+		}
+		facts := RequestFacts{Protocol: r.Protocol, MessageDigests: a.MessageDigests, Model: a.Model, ToolsDigest: a.ToolsDigest, PreviousResponseID: a.PreviousResponseID}
+		if p, ok := ix.positions[a.Position]; ok {
+			p.tipExchangeIDs = append(p.tipExchangeIDs, r.ExchangeID)
+		} else {
+			ix.positions[a.Position] = &position{sessionID: a.SessionID, depth: a.Depth, ownerExchangeID: r.ExchangeID, tipExchangeIDs: []string{r.ExchangeID}, model: a.Model, toolsDigest: a.ToolsDigest, successors: make(map[string]struct{})}
+		}
+		if a.ParentPosition != "" {
+			if p, ok := ix.positions[a.ParentPosition]; ok {
+				p.successors[a.Position] = struct{}{}
+			}
+		}
+		ix.exchanges[r.ExchangeID] = &exchangeRecord{assignment: a, sessionID: a.SessionID, model: facts.Model, toolsDigest: facts.ToolsDigest}
+		if a.PreviousResponseID != "" {
+			ix.responses[a.PreviousResponseID] = &responseLink{exchangeID: r.ExchangeID, sessionID: a.SessionID, depth: a.Depth - 1, position: a.ParentPosition, model: a.Model, toolsDigest: a.ToolsDigest}
+		}
+		if r.ResponseID != "" {
+			ix.responses[r.ResponseID] = &responseLink{exchangeID: r.ExchangeID, sessionID: a.SessionID, depth: a.Depth, position: a.Position, model: a.Model, toolsDigest: a.ToolsDigest}
+		}
+	}
+}
+
+type HydrationRecord struct {
+	ExchangeID string
+	Protocol   inspection.Protocol
+	Assignment Assignment
+	ResponseID string
+}
+
+// HydrateResponse links a durable Responses response id to its exchange.
+func (ix *Index) HydrateResponse(responseID, exchangeID string) {
+	if ix == nil || responseID == "" {
+		return
+	}
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	if e, ok := ix.exchanges[exchangeID]; ok {
+		ix.responses[responseID] = &responseLink{exchangeID: exchangeID, sessionID: e.sessionID, depth: e.assignment.Depth, position: e.assignment.Position, model: e.model, toolsDigest: e.toolsDigest}
+	}
+}
+
 func (ix *Index) registerTipLocked(sessionID string, depth int, exchangeID string, facts RequestFacts, tipHash string) {
 	if existing, ok := ix.positions[tipHash]; ok {
 		// The tip is already registered; the first owner stays authoritative.

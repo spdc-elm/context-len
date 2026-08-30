@@ -1,6 +1,8 @@
 package session
 
 import (
+	"bytes"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -235,8 +237,118 @@ func TestCanonicalDigestStability(t *testing.T) {
 	}
 }
 
-// TestAnalyzeRequestFacts checks the analysis seam: digests, tools digest,
-// and previous_response_id extraction from realistic bodies.
+// TestAnalyzeRequestReaderBudgetDoesNotAssignIdentity proves oversized bodies
+// are bounded and cannot accidentally become session identity facts.
+func TestAnalyzeRequestReaderBudgetDoesNotAssignIdentity(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"` + strings.Repeat("x", 1024*1024) + `"}]}`)
+	r := &countingReader{data: body}
+	analysis, err := AnalyzeRequestReader(inspection.ProtocolChatCompletions, r, 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.AnalysisComplete {
+		t.Fatal("large body unexpectedly marked complete")
+	}
+	if len(analysis.MessageDigests) != 0 || !analysis.Summary.Empty() {
+		t.Fatalf("incomplete analysis exposed identity facts: %+v", analysis)
+	}
+	if r.read > 64*1024+1 {
+		t.Fatalf("reader consumed %d bytes, budget exceeded", r.read)
+	}
+}
+
+func TestHydratePreservesAssignmentSemantics(t *testing.T) {
+	ix := NewIndex(0)
+	rootFacts := chatFacts("system", "user-1")
+	rootFacts.PreviousResponseID = "prev-root"
+	root := ix.Assign("root", rootFacts)
+	continueFacts := chatFacts("system", "user-1", "assistant-1", "user-2")
+	continueFacts.PreviousResponseID = "prev-continue"
+	continuation := ix.Assign("continue", continueFacts)
+	forkFacts := chatFacts("system", "user-1", "assistant-fork", "user-2b")
+	forkFacts.PreviousResponseID = "prev-fork"
+	fork := ix.Assign("fork", forkFacts)
+	repeat := ix.Assign("repeat", continueFacts)
+	if !root.Root || !fork.Fork || repeat.RepeatIndex != 1 {
+		t.Fatalf("unexpected source assignments: root=%+v fork=%+v repeat=%+v", root, fork, repeat)
+	}
+	if fork.ParentExchangeID != "root" || fork.SessionID != root.SessionID {
+		t.Fatalf("fork parent/session = %+v", fork)
+	}
+	records := []HydrationRecord{
+		{ExchangeID: "root", Protocol: inspection.ProtocolChatCompletions, Assignment: *root.Clone(), ResponseID: "response-root"},
+		{ExchangeID: "continue", Protocol: inspection.ProtocolChatCompletions, Assignment: *continuation.Clone(), ResponseID: "response-continue"},
+		{ExchangeID: "fork", Protocol: inspection.ProtocolChatCompletions, Assignment: *fork.Clone(), ResponseID: "response-fork"},
+		{ExchangeID: "repeat", Protocol: inspection.ProtocolChatCompletions, Assignment: *repeat.Clone(), ResponseID: "response-repeat"},
+	}
+	rehydrated := NewIndex(0)
+	rehydrated.Hydrate(records)
+	gotContinue := rehydrated.Assign("continue-new", continueFacts)
+	if gotContinue.SessionID != root.SessionID || gotContinue.Depth != continuation.Depth || gotContinue.RepeatIndex != 2 || gotContinue.Fork != continuation.Fork || gotContinue.PreviousResponseID != continuation.PreviousResponseID {
+		t.Fatalf("hydrated continuation/repeat = %+v, source=%+v", gotContinue, continuation)
+	}
+	gotFork := rehydrated.Assign("fork-new", forkFacts)
+	if gotFork.SessionID != root.SessionID || gotFork.Depth != fork.Depth || gotFork.RepeatIndex != 1 || gotFork.PreviousResponseID != fork.PreviousResponseID || gotFork.ParentPosition != fork.ParentPosition {
+		t.Fatalf("hydrated fork repeat = %+v, source=%+v", gotFork, fork)
+	}
+	newFork := rehydrated.Assign("fork-other", chatFacts("system", "user-1", "assistant-other", "user-2c"))
+	if !newFork.Fork || newFork.SessionID != root.SessionID || newFork.Depth != fork.Depth {
+		t.Fatalf("hydrated fork semantics = %+v", newFork)
+	}
+	responseContinuation := rehydrated.Assign("response-new", RequestFacts{Protocol: inspection.ProtocolResponses, Model: root.Model, PreviousResponseID: "response-root"})
+	if responseContinuation.SessionID != root.SessionID || responseContinuation.Depth != root.Depth+1 || responseContinuation.ParentExchangeID != "root" || responseContinuation.PreviousResponseID != "response-root" {
+		t.Fatalf("hydrated response link = %+v", responseContinuation)
+	}
+}
+
+// TestOversizedAnalysisDoesNotBecomeHydrationIdentity ensures an incomplete,
+// budget-limited analysis contributes no identity facts to durable hydration.
+func TestOversizedAnalysisDoesNotBecomeHydrationIdentity(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"` + strings.Repeat("x", 1024*1024) + `"}]}`)
+	analysis, err := AnalyzeRequestReader(inspection.ProtocolChatCompletions, bytes.NewReader(body), 64*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.AnalysisComplete || len(analysis.MessageDigests) != 0 || !analysis.Summary.Empty() {
+		t.Fatalf("incomplete analysis exposed hydration identity: %+v", analysis)
+	}
+	ix := NewIndex(0)
+	ix.Hydrate(nil)
+	assignment := ix.Assign("oversized", RequestFacts{Protocol: inspection.ProtocolChatCompletions, MessageDigests: analysis.MessageDigests})
+	if !assignment.Root || assignment.SessionID == "" {
+		t.Fatalf("oversized request did not start an uncorrelated root: %+v", assignment)
+	}
+}
+
+func TestAnalyzeRequestReaderLargeValidBody(t *testing.T) {
+	body := []byte(`{"model":"large","messages":[{"role":"user","content":"` + strings.Repeat("x", 2*1024*1024) + `"}]}`)
+	analysis, err := AnalyzeRequestReader(inspection.ProtocolChatCompletions, bytes.NewReader(body), 3*1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !analysis.AnalysisComplete || analysis.Summary.Model != "large" || analysis.Summary.MessageCount != 1 || len(analysis.MessageDigests) != 1 {
+		t.Fatalf("large valid analysis = %+v", analysis)
+	}
+}
+
+type countingReader struct {
+	data      []byte
+	pos, read int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	if len(p) > len(r.data)-r.pos {
+		p = p[:len(r.data)-r.pos]
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	r.read += n
+	return n, nil
+}
+
 func TestAnalyzeRequestFacts(t *testing.T) {
 	body := []byte(`{"model":"m","previous_response_id":"resp_1","instructions":"be brief","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"lookup"}]}`)
 	analysis := AnalyzeRequest(inspection.ProtocolResponses, body)
