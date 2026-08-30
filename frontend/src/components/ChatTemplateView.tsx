@@ -669,7 +669,6 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
           ) : (
             !useSessionScope ? <span>{visibleBlocks.length} blocks</span> : null
           )}
-          {useSessionScope ? <span className="chat-session-meta">session lineage</span> : null}
           {unknownCount > 0 ? (
             <button
               type="button"
@@ -699,7 +698,7 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
           title={toolbarCollapsed ? "Expand toolbar" : "Collapse toolbar"}
           onClick={() => setToolbarCollapsed((current) => !current)}
         >
-          {toolbarCollapsed ? "Expand" : "Collapse"}
+          <span className="chat-toolbar-caret" aria-hidden="true" />
         </button>
       </div>
       {document.warnings.length > 0 && !isSse && !useSessionScope && (

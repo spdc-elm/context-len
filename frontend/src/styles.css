@@ -370,9 +370,35 @@ body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
 .chat-unknown-toggle.active { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); }
 .chat-fold-toggle { padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: transparent; font-size: 10.5px; font-weight: 600; cursor: pointer; }
 .chat-fold-toggle:hover { color: var(--text); border-color: var(--muted); }
-.chat-toolbar-toggle { flex: 0 0 auto; padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); background: transparent; font-size: 10.5px; font-weight: 600; cursor: pointer; }
-.chat-toolbar-toggle:hover { color: var(--text); border-color: var(--muted); background: color-mix(in srgb, var(--accent-strong) 10%, transparent); }
-.chat-session-meta { color: var(--muted); font-size: 10.5px; letter-spacing: .04em; }
+.chat-toolbar-toggle {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 19px;
+  margin-left: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+  cursor: pointer;
+}
+.chat-toolbar-caret {
+  display: block;
+  width: 0;
+  height: 0;
+  border-right: 4px solid transparent;
+  border-bottom: 5px solid currentColor;
+  border-left: 4px solid transparent;
+}
+.chat-toolbar-toggle[aria-expanded="false"] .chat-toolbar-caret {
+  border-top: 5px solid currentColor;
+  border-bottom: 0;
+}
+.chat-toolbar-toggle:hover { color: var(--text); border-color: var(--muted); background: color-mix(in srgb, var(--accent-strong) 10%, var(--surface)); }
 .chat-turn { position: relative; }
 .chat-turn + .chat-turn { margin-top: 4px; }
 .chat-turn-boundary { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 5px 10px; margin: 8px 0 7px; border: 1px solid var(--line); border-left: 2px solid var(--accent-strong); border-radius: 6px; color: var(--muted); background: rgba(18, 22, 32, .55); font-size: 10px; }

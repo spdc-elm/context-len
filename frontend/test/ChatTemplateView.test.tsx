@@ -101,7 +101,9 @@ describe("ChatTemplateView", () => {
     const toolbar = rendered.querySelector('[role="toolbar"]');
     expect(toolbar).not.toBeNull();
     expect(toolbar?.classList.contains("chat-template-heading")).toBe(true);
+    expect(rendered.querySelector(".chat-session-meta")).toBeNull();
     const toggle = rendered.querySelector(".chat-toolbar-toggle");
+    expect(toggle?.textContent).toBe("");
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
     expect(rendered.querySelector(".chat-fold-toggle")).not.toBeNull();
     click(toggle);
