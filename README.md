@@ -11,8 +11,9 @@
 3. [`docs/runtime-contract.md`](docs/runtime-contract.md)：backend 与 workspace UI 的运行时接缝
 4. [`docs/session-spec.md`](docs/session-spec.md)：session 重建、fork/rollout 检测、队列面板与合并视图设计（已实现）
 
-运行时默认是 ephemeral。启用可选 durable-local 模式时，设置 `CONTEXT_LENS_DURABLE=1`；数据目录默认 `.context-lens-run`，可通过 `CONTEXT_LENS_DATA_DIR` 覆盖。该模式使用 SQLite WAL 保存 sessions/exchanges/artifact refs 等 metadata，并在私有数据目录保存 content-addressed 文件 blobs；raw request/response body bytes 不进入 SQLite。未启用 durable 时，重启不会恢复内存 workspace。
+运行时默认是 ephemeral，且新进程默认处于 `passthrough` capture mode。`passthrough` 只影响设置变更之后进入的请求：请求和响应按原协议、原始应用层字节透明转发，不创建 session、exchange、artifact、summary、catalog、workspace snapshot 或事件，也不执行 capture 分析或 gate。切换为 `capture` 后，后续 ingress 才会启用存储、分析和显式 gate；切换不会改写已经进入的 exchange。只要 request 或 response gate 为 `hold`，就不能切回 `passthrough`，API 返回稳定的冲突错误，工作台也会禁用该切换。可通过 `GET/PATCH /api/settings/capture` 读取或设置 `{ "capture_mode": "passthrough"|"capture" }`。启用可选 durable-local 模式时，设置 `CONTEXT_LENS_DURABLE=1`；数据目录默认 `.context-lens-run`，可通过 `CONTEXT_LENS_DATA_DIR` 覆盖。该模式使用 SQLite WAL 保存 sessions/exchanges/artifact refs 等 metadata，并在私有数据目录保存 content-addressed 文件 blobs；raw request/response body bytes 不进入 SQLite。未启用 durable 时，重启不会恢复内存 workspace。
 
+工作台提供显式的数据管理：顶栏显示简洁的 `MEM used / limit` 与 `DISK used / limit` 状态；`GET /api/storage` 返回同样的四个计数。`DELETE /api/exchanges` 是 Clear Workspace，会清空全部 workspace 数据；`DELETE /api/sessions/{session_id}` 只删除完整 session（包含其全部 turns/exchanges 及可释放 artifact），没有逐 turn 删除接口。
 ## 本地运行
 
 最简单的启动方式是：

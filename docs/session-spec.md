@@ -2,6 +2,15 @@
 
 状态：已实现（Phase A 面板投影、Phase B 位置链归属、Phase C 合并视图均已落地）。本文是左侧面板改造、上下文占用、session 去重与合并视图的唯一设计来源。wire/协议边界以 `docs/protocol-contract.md` 为准，运行时接缝以 `docs/runtime-contract.md` 为准，Chat Template 投影规则以 `docs/chat-template-spec.md` 为准。
 
+## 0. Capture mode 前提
+
+进程默认 `capture_mode=passthrough`。该模式只对设置变更后新进入的 ingress 生效；既有 exchange 不会被改写。passthrough 是同协议透明转发路径，保留原始请求/响应字节并且不创建 session 归属、exchange、artifact、summary、catalog、workspace snapshot 或事件，也不做 session 分析或 gate。只有 `capture` 模式才会存储 artifact、计算本 spec 的 session/summary 投影并执行 gate。通过 `GET/PATCH /api/settings/capture` 读取或切换模式；任一 gate 为 `hold` 时切换到 passthrough 被拒绝（HTTP 409 稳定冲突），因此 hold 期间必须保持 capture。
+
+- `passthrough` ingress 不会出现在本 spec 的 session 列表或 projection 中；切换为 `capture` 后才从下一请求开始产生 session 数据。
+- capture 的 request/response body 仍是不可变 wire authority。分析、session placement、summary、ChatML 和 UI 均为派生观察，不得成为 transport input。
+- 存储使用独立的 `MEM`/`DISK` 预算，可由 `GET /api/storage` 查看。artifact 通过任意 range 与 lazy reader 按需查看，查看范围不受 1 MiB 或 8 MiB 的固定上限限制；单次读取块大小（如实现存在）只是 I/O 预算。
+- Clear Workspace 使用 `DELETE /api/exchanges`；whole-session deletion 使用 `DELETE /api/sessions/{session_id}`，一次删除 session 的整棵树和全部 turns/exchanges。没有逐 turn 删除。
+
 ## 1. 目标与非目标
 
 目标：
@@ -127,7 +136,8 @@ fork 语义：同一父 tip 的不同后继在同一 session 树上形成两条�
 ### 4.5 边界与生命周期
 
 - 位置索引为进程内存态；未启用 durable 时重启即清空。启用 durable-local 时，启动从 SQLite 保存的 session/exchange metadata hydration，artifact body 仍按需读取。
-- 容量上限：位置表设全局上限，超限时按 session 活跃度 LRU 整树淘汰；被淘汰 session 的后续请求成为新根。上限可配置。
+- 存储预算分为内存与磁盘两项：`MaxMemoryBytes` 限制进程内 artifact bytes，`MaxTotalBytes` 限制内存与磁盘合计的 artifact bytes。workspace 顶栏和 `GET /api/storage` 展示 `MEM`、`DISK` 当前用量与上限。
+- 清理操作是显式的：Clear Workspace 清空整个 workspace；删除单个 session 时使用 `DELETE /api/sessions/{session_id}`，一次删除该 session 的完整树、exchange 元数据与无共享 artifact。
 - 同一开头的两个独立会话（相同 system + 相同首条 user）会合入同一棵树，表现为同上下文的两个分支/rollout——与 Polar 的前缀定义一致，属接受的行为。
 
 ## 5. 数据模型与 API
@@ -169,7 +179,7 @@ req₁ 的初始上下文（inbound messages）
 | manual response / dropped | 合并视图标记该轮，无 usage |
 | 流式无 usage | ctx 显示 `—`，不估算 |
 | key 顺序漂移 | 规范化序列化消化 |
-| 位置索引 LRU 淘汰 | 被淘汰 session 的后续请求成为新根；接受 |
+| 存储预算达到上限 | 通过 `MEM`、`DISK` 指标观察用量，并使用 Clear Workspace 或 whole-session deletion 释放空间。 |
 | 未启用 durable 的重启 | 内存位置索引清空，后续请求成为新根 |
 | durable-local 重启 | 从保存的 snapshot/session metadata hydration；artifact body 仍 lazy 读取 |
 | 同开头独立会话 | 合入同一棵树为分支/rollout；接受 |
@@ -178,7 +188,7 @@ req₁ 的初始上下文（inbound messages）
 
 ## 8. 当前实现与边界
 
-A/B/C 的 session 投影、位置链、fork/rollout、summary 与合并视图已经落地。session 位置索引仍是进程内结构；仅当启动时 `CONTEXT_LENS_DURABLE=1`，standalone `cmd/context-lens` 才会启用 durable-local，从 SQLite 保存 metadata（包括 session/exchange 关系）并以 data directory 下的文件 blob 保存 artifact，重启后再惰性 hydration。未设置该环境变量时仍是 ephemeral，重启即清空内存索引和元数据。本文不承诺自动 retention：30 分钟 inactivity Session GC 未实现且已撤回，`favorite` retention 也不是当前能力（如未来需要，须另行设计 durable `pinned/keep` 语义）。
+A/B/C 的 session 投影、位置链、fork/rollout、summary 与合并视图已经落地。session 位置索引仍是进程内结构；仅当启动时 `CONTEXT_LENS_DURABLE=1`，standalone `cmd/context-lens` 才会启用 durable-local，从 SQLite 保存 metadata（包括 session/exchange 关系）并以 data directory 下的文件 blob 保存 artifact，重启后再惰性 hydration。workspace 提供显式 Clear Workspace 与 whole-session deletion；存储预算按 `MEM`、`DISK` 分开统计并在 workspace 顶栏和 `GET /api/storage` 展示。
 
 当前 workspace 列表是 metadata-only、有界分页（`limit` 与 opaque `cursor`，响应 `X-Next-Cursor`）；长 artifact 通过 range/full/download/search 按需访问。浏览器侧已验证 bounded artifact loader（按 artifact/range 去重、generation 取消过期读取、LRU 字节预算），但这不是完整 session 投影：当前页面只对已加载的 exchange/session lineage 建树，较早或未分页加载的轮次不会自动出现在 projection 中，需显式加载更多页面/上下文。捕获不完整或请求范围不足时，投影必须保持 partial/truncated，不得当作完整 JSON/SSE 解析。
 
@@ -186,7 +196,7 @@ Raw JSON tree 目前只提供有界默认展开、长值摘要和 partial 文本
 
 ## 9. 分期与验收
 
-历史分期名称仅用于说明实现边界，不表示待办状态。Phase A（面板）、Phase B（归属）和 Phase C（合并视图）均已实现。当前已验证的有界能力是：workspace metadata 分页（limit/cursor）、artifact range/full/download/search 的边界、浏览器 artifact loader 的去重/取消/LRU 字节预算，以及 incomplete/partial artifact 的安全回退。Raw JSON tree 和 SSE/live projection 仍非完全虚拟化，session projection 也不是跨全部历史的全量投影。后续如扩展全量 session hydration、节点/SSE windowing 或持久化/保留策略，必须先更新本节和 runtime contract。
+Raw JSON tree 和 SSE/live projection 仍非完全虚拟化，session projection 也不是跨全部历史的全量投影。workspace metadata 分页（limit/cursor）、artifact range/full/download/search、浏览器 artifact loader 的去重/取消/LRU 字节预算，以及 incomplete/partial artifact 的安全回退，均属于按需加载与显式预算控制的观察能力。
 
 ## 10. 已拍板决策
 
