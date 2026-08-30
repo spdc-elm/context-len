@@ -12,6 +12,7 @@ interface TrafficQueueProps {
   onClear?: () => void;
   clearBusy?: boolean;
   onSelect: (exchangeId: string, followSessionId?: string) => void;
+  onDeleteSession?: (sessionId: string) => void;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
@@ -75,7 +76,7 @@ function uniqueOption(values: string[]): string[] {
   return [...new Set(values.filter((value) => value !== ""))].sort((left, right) => left.localeCompare(right));
 }
 
-export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false, onToggle, onClear, clearBusy = false, onSelect, hasMore = false, loadingMore = false, onLoadMore }: TrafficQueueProps) {
+export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false, onToggle, onClear, clearBusy = false, onSelect, onDeleteSession, hasMore = false, loadingMore = false, onLoadMore }: TrafficQueueProps) {
   const [filters, setFilters] = useState<FilterState>(NO_FILTERS);
   const [view, setView] = useState<QueueView>("sessions");
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
@@ -234,6 +235,7 @@ export function TrafficQueue({ exchanges, selectedExchangeId, collapsed = false,
                 selectedExchangeId={selectedExchangeId}
                 onToggle={() => toggleSession(group.sessionId)}
                 onSelect={onSelect}
+                onDeleteSession={onDeleteSession}
               />
             ))}
             {filteredOther.length > 0 && (
@@ -328,12 +330,13 @@ function ExchangeRow({ exchange, selected, onSelect }: {
   );
 }
 
-function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }: {
+function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect, onDeleteSession }: {
   group: SessionGroup;
   expanded: boolean;
   selectedExchangeId?: string;
   onToggle: () => void;
   onSelect: (exchangeId: string, followSessionId?: string) => void;
+  onDeleteSession?: (sessionId: string) => void;
 }) {
   const stats = statsLine(group.latest.summary);
   const selectedInGroup = group.members.some((exchange) => exchange.exchange_id === selectedExchangeId);
@@ -344,17 +347,24 @@ function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }:
   ].filter(Boolean).join(" · ");
   return (
     <div className="traffic-session">
-      <button
-        type="button"
+      <div
         role="option"
         aria-selected={selectedInGroup}
+        tabIndex={0}
         className={`traffic-row ${selectedInGroup ? "selected" : ""}`}
         onClick={() => onSelect(group.latest.exchange_id, group.sessionId)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect(group.latest.exchange_id, group.sessionId);
+          }
+        }}
       >
         <div className="traffic-row-top">
           <span className={`protocol-dot protocol-${group.protocol}`} aria-hidden="true" />
           <strong>{protocolLabel(group.protocol)}</strong>
           <span className={`state-pill state-${group.state}`}>{stateLabel(group.state)}</span>
+          <button type="button" className="session-delete-button" aria-label={`Delete session ${group.sessionId}`} title="Delete entire session" onClick={(event) => { event.stopPropagation(); onDeleteSession?.(group.sessionId); }} onKeyDown={(event) => { event.stopPropagation(); }}>×</button>
           <span
             className={`traffic-session-chevron ${expanded ? "open" : ""}`}
             role="button"
@@ -380,7 +390,7 @@ function SessionRow({ group, expanded, selectedExchangeId, onToggle, onSelect }:
           <span>{[`${group.turnCount} turn${group.turnCount > 1 ? "s" : ""}`, turnBadges].filter(Boolean).join(" · ")}</span>
           <span>{formatWorkspaceTime(group.updatedAt)}</span>
         </div>
-      </button>
+      </div>
       {expanded && (
         <div className="traffic-session-members" role="group" aria-label="Session turns">
           {group.members.map((exchange) => (
@@ -409,6 +419,7 @@ function MemberRow({ exchange, selected, onSelect }: {
   if (assignment?.model_changed) badges.push("model changed");
   if (assignment?.tools_changed) badges.push("tools changed");
   const indent = Math.min(Math.max((assignment?.depth ?? 1) - 1, 0), 6);
+  const stats = statsLine(exchange.summary);
   return (
     <button
       type="button"

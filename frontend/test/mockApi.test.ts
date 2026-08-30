@@ -52,6 +52,21 @@ describe("mock workspace API contract", () => {
     expect(updated.response.artifact_refs).toHaveLength(2);
   });
 
+  it("supports capture mode, storage stats, and whole-session deletion in the standard mock", async () => {
+    const api = new MockWorkspaceApi();
+    expect(await api.getCaptureMode?.()).toBe("passthrough");
+    await api.setPolicy({ request_gate: "hold", response_gate: "pass" });
+    await expect(api.setCaptureMode?.("passthrough")).rejects.toThrow("capture mode conflict");
+    expect(await api.setCaptureMode?.("capture")).toBe("capture");
+    const stats = await api.getStorageStats?.();
+    expect(stats?.disk_limit).toBeGreaterThan(0);
+    const removed: string[] = [];
+    const unsubscribe = api.subscribe((event) => { if (event.kind === "exchange_removed") removed.push(event.exchange_id); });
+    await api.deleteSession?.("sess-mock-responses");
+    unsubscribe();
+    expect(removed.length).toBeGreaterThan(0);
+    expect((await api.listExchanges()).some((item) => item.session?.session_id === "sess-mock-responses")).toBe(false);
+  });
   it("keeps policy updates separate from existing exchange snapshots", async () => {
     const api = createMockWorkspaceApi();
     const before = await api.listExchanges();

@@ -34,6 +34,8 @@ describe("workbench shell", () => {
     expect(rendered.textContent).toContain("Exchange queue");
     expect(rendered.textContent).toContain("/v1/responses");
     expect(rendered.textContent).toContain("Request is held");
+    expect(rendered.textContent).toContain("MEM ");
+    expect(rendered.textContent).toContain("DISK ");
     expect(rendered.querySelector('[role="tab"]')).not.toBeNull();
   });
 
@@ -68,6 +70,31 @@ describe("workbench shell", () => {
       await Promise.resolve();
     });
     expect((rendered.querySelector('select[aria-label="Artifact"]') as HTMLSelectElement).value).toBe(responseOption!.value);
+  });
+
+  it("allows passthrough to enter capture while a gate is held", async () => {
+    class HeldWorkspaceApi extends MockWorkspaceApi {
+      override async getPolicy(): Promise<{ request_gate: "hold"; response_gate: "pass" }> {
+        return { request_gate: "hold", response_gate: "pass" };
+      }
+    }
+    const api = new HeldWorkspaceApi();
+    const rendered = await renderApp(api);
+    const toggle = rendered.querySelector('button[role="switch"][aria-label="Capture mode: passthrough"]') as HTMLButtonElement;
+    expect(toggle.disabled).toBe(false);
+    await act(async () => { toggle.click(); await Promise.resolve(); });
+    expect(api).toBeDefined();
+    expect(rendered.querySelector('button[aria-label="Capture mode: capture"]')).not.toBeNull();
+  });
+
+  it("surfaces capture API failures in the workspace error banner", async () => {
+    class FailingCaptureApi extends MockWorkspaceApi {
+      override async setCaptureMode(): Promise<never> { throw new Error("capture unavailable"); }
+    }
+    const rendered = await renderApp(new FailingCaptureApi());
+    const toggle = rendered.querySelector('button[role="switch"][aria-label="Capture mode: passthrough"]') as HTMLButtonElement;
+    await act(async () => { toggle.click(); await Promise.resolve(); });
+    expect(rendered.querySelector('[role="alert"]')?.textContent).toContain("capture unavailable");
   });
 
   it("renders Qwen ChatML as a derived continuous context stream", async () => {

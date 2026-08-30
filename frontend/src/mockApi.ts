@@ -6,7 +6,8 @@ import {
   type ExchangeEvent,
   type ExchangeSnapshot,
   type ExchangePage,
-  type GateMode,
+  type CaptureMode,
+  type StorageStats,
   type MutationResult,
   type WorkspaceApi,
   type WorkspaceCommand,
@@ -358,6 +359,7 @@ export class MockWorkspaceApi implements WorkspaceApi {
   private readonly revisions = new Map<string, number>();
   private readonly listeners = new Set<(event: ExchangeEvent) => void>();
   private policy: WorkspacePolicy = { request_gate: "pass", response_gate: "pass" };
+  private captureMode: CaptureMode = "passthrough";
 
   constructor(records = initialRecords()) {
     for (const record of records) {
@@ -460,6 +462,31 @@ export class MockWorkspaceApi implements WorkspaceApi {
   async setPolicy(policy: WorkspacePolicy, _signal?: AbortSignal): Promise<WorkspacePolicy> {
     this.policy = { ...policy };
     return { ...this.policy };
+  }
+
+  async getCaptureMode(_signal?: AbortSignal): Promise<CaptureMode> { return this.captureMode; }
+
+  async setCaptureMode(mode: CaptureMode, _signal?: AbortSignal): Promise<CaptureMode> {
+    if (mode === "passthrough" && (this.policy.request_gate === "hold" || this.policy.response_gate === "hold")) throw new Error("capture mode conflict: capture is required while a gate is held");
+    this.captureMode = mode;
+    return mode;
+  }
+
+  async getStorageStats(_signal?: AbortSignal): Promise<StorageStats> {
+    let disk = 0;
+    for (const record of this.records.values()) for (const body of record.bodies.values()) disk += encoder.encode(body).byteLength;
+    return { memory_used: disk, memory_limit: 512 * 1024 * 1024, disk_used: disk, disk_limit: 2 * 1024 * 1024 * 1024 };
+  }
+
+  async deleteSession(sessionId: string, _signal?: AbortSignal): Promise<void> {
+    const ids = [...this.records.values()].filter((record) => record.snapshot.session?.session_id === sessionId).map((record) => record.snapshot.exchange_id);
+    for (const id of ids) {
+      this.records.delete(id); this.revisions.delete(id);
+      const event: ExchangeEvent = { event_id: `mock-session-remove-${id}`, exchange_id: id, revision: 0, kind: "exchange_removed", snapshot_delta: {}, artifact_refs: [], created_at: now() };
+      for (const listener of this.listeners) listener(event);
+    }
+    const event: ExchangeEvent = { event_id: `mock-session-removed-${sessionId}`, exchange_id: "", revision: 0, kind: "session_removed", snapshot_delta: { session: { session_id: sessionId, depth: 0 } }, artifact_refs: [], created_at: now() };
+    for (const listener of this.listeners) listener(event);
   }
 
   async clearExchanges(_signal?: AbortSignal): Promise<void> {

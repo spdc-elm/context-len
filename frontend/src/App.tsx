@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type {
   ArtifactRef,
+  CaptureMode,
   GateMode,
+  StorageStats,
   WorkspaceApi,
   WorkspaceCommand,
 } from "./contracts";
@@ -67,7 +69,7 @@ function initialTheme(): "light" | "dark" {
   }
 }
 
-const MAX_CLIENT_PARSE_BYTES = 8 << 20;
+const PREVIEW_RANGE_BYTES = 1 << 20;
 
 export function App({ api }: AppProps) {
   // Do not default the prop parameter to the mock: production renders use the
@@ -76,6 +78,9 @@ export function App({ api }: AppProps) {
   const [state, dispatch] = useReducer(workspaceReducer, initialWorkspaceState);
   const [commandBusy, setCommandBusy] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+  const [captureMode, setCaptureMode] = useState<CaptureMode>("passthrough");
+  const [captureBusy, setCaptureBusy] = useState(false);
+  const [storage, setStorage] = useState<StorageStats | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const loader = useMemo(() => new ArtifactLoader(runtimeApi), [runtimeApi]);
@@ -106,11 +111,22 @@ export function App({ api }: AppProps) {
         setPageCursor(page.next_cursor); setHasMoreExchanges(page.has_more ?? Boolean(page.next_cursor)); return page.exchanges;
       })
       : runtimeApi.listExchanges(controller.signal).then((items) => { setHasMoreExchanges(false); return items; });
+    if (runtimeApi.getCaptureMode || runtimeApi.getStorageStats) {
+      Promise.all([runtimeApi.getCaptureMode?.(controller.signal), runtimeApi.getStorageStats?.(controller.signal)]).then(([mode, stats]) => { if (!cancelled) { if (mode) setCaptureMode(mode); if (stats) setStorage(stats); } }).catch(() => undefined);
+    }
     void Promise.all([loadPage, runtimeApi.getPolicy(controller.signal)]).then(([exchanges, policy]) => {
       if (!cancelled) dispatch({ type: "load_succeeded", exchanges, policy });
     }).catch((error: unknown) => {
       if (!cancelled && !controller.signal.aborted) dispatch({ type: "load_failed", error: error instanceof Error ? error.message : String(error) });
     });
+    let storageRefreshTimer: number | undefined;
+    const scheduleStorageRefresh = () => {
+      if (!runtimeApi.getStorageStats || storageRefreshTimer !== undefined) return;
+      storageRefreshTimer = window.setTimeout(() => {
+        storageRefreshTimer = undefined;
+        void runtimeApi.getStorageStats?.().then((next) => { if (!cancelled) setStorage(next); }).catch(() => undefined);
+      }, 100);
+    };
     const flushStreams = () => {
       streamFlushHandle.current = undefined;
       const pending = pendingStreamEvents.current;
@@ -125,6 +141,7 @@ export function App({ api }: AppProps) {
         streamFlushHandle.current = window.setTimeout(flushStreams, 16);
       }
     };
+    const storageTimer = runtimeApi.getStorageStats ? window.setInterval(() => { void runtimeApi.getStorageStats!().then(setStorage).catch(() => undefined); }, 30000) : undefined;
     const unsubscribe = runtimeApi.subscribe((event) => {
       if (cancelled) return;
       if (event.kind === "stream_event" && event.stream) {
@@ -132,11 +149,14 @@ export function App({ api }: AppProps) {
         scheduleStreamFlush();
       } else {
         dispatch({ type: "event_received", event });
+        if (event.kind !== "stream_event") scheduleStorageRefresh();
       }
     });
     return () => {
       cancelled = true;
       controller.abort();
+      if (storageTimer !== undefined) window.clearInterval(storageTimer);
+      if (storageRefreshTimer !== undefined) window.clearTimeout(storageRefreshTimer);
       unsubscribe();
       if (streamFlushHandle.current !== undefined) {
         if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") window.cancelAnimationFrame(streamFlushHandle.current);
@@ -163,10 +183,12 @@ export function App({ api }: AppProps) {
   const lineage = useMemo(() => sessionLineage(state.exchanges, state.selectedExchangeId), [state.exchanges, state.selectedExchangeId]);
   const heldCount = useMemo(() => state.exchanges.filter((item) => item.state === "request_held" || item.state === "response_held").length, [state.exchanges]);
 
-  const loadBody = useCallback(async (artifact: ArtifactRef) => {
+  const loadBody = useCallback(async (artifact: ArtifactRef, range?: { start: number; end?: number }) => {
     dispatch({ type: "body_load_started", artifactId: artifact.artifact_id });
     try {
-      const body = await loader.load(artifact, { artifact_id: artifact.artifact_id, start: 0, ...(artifact.size <= MAX_CLIENT_PARSE_BYTES ? {} : { end: 1 << 20 }) });
+      const start = range?.start ?? 0;
+      const end = range?.end ?? (artifact.size > PREVIEW_RANGE_BYTES ? start + PREVIEW_RANGE_BYTES : undefined);
+      const body = await loader.load(artifact, { artifact_id: artifact.artifact_id, start, ...(end !== undefined ? { end } : {}) });
       dispatch({ type: "body_loaded", body: {
         artifactId: body.artifact_id,
         text: new TextDecoder().decode(body.bytes),
@@ -228,12 +250,31 @@ export function App({ api }: AppProps) {
     }
   }
 
+  async function toggleCapture() {
+    if (!runtimeApi.setCaptureMode || captureBusy) return;
+    const next = captureMode === "capture" ? "passthrough" : "capture";
+    if (next === "passthrough" && (state.policy.request_gate === "hold" || state.policy.response_gate === "hold")) return;
+    setCaptureBusy(true);
+    try {
+      setCaptureMode(await runtimeApi.setCaptureMode(next));
+      dispatch({ type: "clear_error" });
+    } catch (error: unknown) { dispatch({ type: "load_failed", error: error instanceof Error ? error.message : String(error) }); }
+    finally { setCaptureBusy(false); }
+  }
+
+  async function deleteSession(sessionId: string) {
+    if (!runtimeApi.deleteSession || typeof window !== "undefined" && !window.confirm("Delete this entire session?")) return;
+    try { await runtimeApi.deleteSession(sessionId); loader.beginGeneration(); dispatch({ type: "session_deleted", sessionId }); if (runtimeApi.getStorageStats) void runtimeApi.getStorageStats().then(setStorage).catch(() => undefined); }
+    catch (error: unknown) { dispatch({ type: "load_failed", error: error instanceof Error ? error.message : String(error) }); }
+  }
+
   async function clearExchanges() {
     if (clearBusy || state.exchanges.length === 0) return;
     if (typeof window !== "undefined" && !window.confirm("Clear all exchange records and captured artifacts?")) return;
     setClearBusy(true);
     try {
       await runtimeApi.clearExchanges();
+      if (runtimeApi.getStorageStats) void runtimeApi.getStorageStats().then(setStorage).catch(() => undefined);
       loader.clear();
       setPageCursor(undefined);
       setHasMoreExchanges(false);
@@ -265,6 +306,11 @@ export function App({ api }: AppProps) {
         heldCount={heldCount}
         theme={theme}
         onGateChange={(gate, value) => void changeGate(gate, value)}
+        captureMode={captureMode}
+        captureBusy={captureBusy}
+        captureAvailable={Boolean(runtimeApi.setCaptureMode)}
+        storage={storage}
+        onCaptureToggle={() => void toggleCapture()}
         onThemeToggle={() => setTheme((current) => current === "dark" ? "light" : "dark")}
       />
       {state.error && <div className="error-banner" role="alert"><strong>Workspace error</strong> {state.error}<button type="button" onClick={() => dispatch({ type: "clear_error" })}>Dismiss</button></div>}
@@ -280,6 +326,7 @@ export function App({ api }: AppProps) {
           onClear={() => void clearExchanges()}
           clearBusy={clearBusy}
           onSelect={handleSelectExchange}
+          onDeleteSession={(sessionId) => void deleteSession(sessionId)}
         />
         <ExchangeDetail
           exchange={exchange}
@@ -292,8 +339,8 @@ export function App({ api }: AppProps) {
           bodyLoadErrorArtifactId={state.bodyLoadErrorArtifactId}
           search={state.search}
           onSearchChange={(value) => dispatch({ type: "set_search", value })}
-          onLoadBody={(artifact) => void loadBody(artifact)}
-          onRetryBody={(artifact) => void loadBody(artifact)}
+          onLoadBody={(artifact, range) => void loadBody(artifact, range)}
+          onRetryBody={(artifact, range) => void loadBody(artifact, range)}
           onDownloadBody={(artifact) => void downloadBody(artifact)}
           onCommand={(intent) => void runCommand(intent)}
           commandBusy={commandBusy}

@@ -7,6 +7,15 @@
 
 export type Protocol = "responses" | "chat_completions" | "anthropic_messages";
 export type GateMode = "pass" | "hold";
+export type CaptureMode = "passthrough" | "capture";
+
+export interface StorageStats {
+  memory_used: number;
+  memory_limit: number;
+  disk_used: number;
+  disk_limit: number;
+}
+
 export type ExchangeState =
   | "received"
   | "request_held"
@@ -321,6 +330,10 @@ export interface WorkspaceApi {
   command(command: WorkspaceCommand, signal?: AbortSignal): Promise<CommandResult>;
   getPolicy(signal?: AbortSignal): Promise<WorkspacePolicy>;
   setPolicy(policy: WorkspacePolicy, signal?: AbortSignal): Promise<WorkspacePolicy>;
+  getCaptureMode?(signal?: AbortSignal): Promise<CaptureMode>;
+  setCaptureMode?(mode: CaptureMode, signal?: AbortSignal): Promise<CaptureMode>;
+  getStorageStats?(signal?: AbortSignal): Promise<StorageStats>;
+  deleteSession?(sessionId: string, signal?: AbortSignal): Promise<void>;
   clearExchanges(signal?: AbortSignal): Promise<void>;
   subscribe(listener: (event: ExchangeEvent) => void): () => void;
 }

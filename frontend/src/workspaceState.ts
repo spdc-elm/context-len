@@ -60,6 +60,7 @@ export type WorkspaceAction =
   | { type: "event_received"; event: ExchangeEvent }
   | { type: "stream_events_received"; events: ExchangeEvent[] }
   | { type: "command_succeeded"; result: CommandResult }
+  | { type: "session_deleted"; sessionId: string }
   | { type: "exchanges_cleared" }
   | { type: "body_load_started"; artifactId?: string }
   | { type: "body_load_finished" }
@@ -271,6 +272,25 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return { ...state, policy: action.policy };
     case "event_received": {
       const event = action.event;
+      if (event.kind === "session_removed" || event.kind === "exchange_removed") {
+        const deltaSessionId = event.snapshot_delta?.session?.session_id;
+        const eventSessionId = typeof (event as ExchangeEvent & { session_id?: unknown }).session_id === "string"
+          ? (event as ExchangeEvent & { session_id: string }).session_id
+          : undefined;
+        const sessionId = typeof deltaSessionId === "string" ? deltaSessionId : eventSessionId;
+        const ids = event.kind === "session_removed" && sessionId
+          ? new Set(state.exchanges.filter((item) => item.session?.session_id === sessionId).map((item) => item.exchange_id))
+          : new Set([event.exchange_id]);
+        const removedArtifactIds = new Set(state.exchanges.filter((item) => ids.has(item.exchange_id)).flatMap((item) => [...item.request.artifact_refs, ...item.response.artifact_refs].map((ref) => ref.artifact_id)));
+        const exchanges = state.exchanges.filter((item) => !ids.has(item.exchange_id));
+        const revisions = { ...state.revisions };
+        const streams = { ...state.streams };
+        for (const id of ids) { delete revisions[id]; delete streams[id]; }
+        const selectedRemoved = state.selectedExchangeId ? ids.has(state.selectedExchangeId) : false;
+        const followRemoved = state.followSessionId !== undefined && (state.followSessionId === sessionId || selectedRemoved);
+        const loadedBodies = Object.fromEntries(Object.entries(state.loadedBodies).filter(([id]) => !removedArtifactIds.has(id)));
+        return { ...state, exchanges, revisions, streams, selectedExchangeId: selectedRemoved ? undefined : state.selectedExchangeId, followSessionId: followRemoved ? undefined : state.followSessionId, loadedBodies, bodyLoading: selectedRemoved ? false : state.bodyLoading };
+      }
       if (event.kind === "stream_event" && event.stream) {
         // A stream observation never commits a revision; it is deduplicated
         // by ordinal inside the live reducer so broker replay and
@@ -320,6 +340,16 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       const nextSnapshot = { ...result.exchange, revision: result.revision };
       const next = upsertExchange(state, nextSnapshot, result.revision);
       return next;
+    }
+    case "session_deleted": {
+      const ids = new Set(state.exchanges.filter((item) => item.session?.session_id === action.sessionId).map((item) => item.exchange_id));
+      const removedArtifactIds = new Set(state.exchanges.filter((item) => ids.has(item.exchange_id)).flatMap((item) => [...item.request.artifact_refs, ...item.response.artifact_refs].map((ref) => ref.artifact_id)));
+      const revisions = { ...state.revisions }; const streams = { ...state.streams };
+      for (const id of ids) { delete revisions[id]; delete streams[id]; }
+      const selectedRemoved = state.selectedExchangeId !== undefined && ids.has(state.selectedExchangeId);
+      const followRemoved = state.followSessionId === action.sessionId || selectedRemoved;
+      const loadedBodies = Object.fromEntries(Object.entries(state.loadedBodies).filter(([id]) => !removedArtifactIds.has(id)));
+      return { ...state, exchanges: state.exchanges.filter((item) => !ids.has(item.exchange_id)), revisions, streams, selectedExchangeId: selectedRemoved ? undefined : state.selectedExchangeId, followSessionId: followRemoved ? undefined : state.followSessionId, loadedBodies, bodyLoading: selectedRemoved ? false : state.bodyLoading };
     }
     case "exchanges_cleared":
       return {

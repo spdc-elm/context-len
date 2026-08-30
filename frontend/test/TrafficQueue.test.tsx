@@ -143,6 +143,16 @@ describe("TrafficQueue", () => {
     expect(container.textContent).toContain("No exchanges match the current filters.");
   });
 
+  it("keeps whole-session deletion isolated from row selection", () => {
+    const calls: string[] = [];
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root.render(<TrafficQueue exchanges={[chatExchange]} selectedExchangeId={undefined} onSelect={() => calls.push("select")} onDeleteSession={(id) => calls.push(`delete:${id}`)} />));
+    const button = container.querySelector(".session-delete-button") as HTMLButtonElement;
+    act(() => button.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(calls).toEqual(["delete:sess-chat"]);
+  });
   it("passes follow mode only for the session row, not a concrete member", () => {
     const child = snapshot({
       exchange_id: "ex-chat-child",

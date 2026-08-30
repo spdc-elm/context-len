@@ -359,6 +359,28 @@ export class LocalWorkspaceApi implements WorkspaceApi {
     return unwrap<WorkspacePolicy>(payload, ["policy"]);
   }
 
+  async getCaptureMode(signal?: AbortSignal): Promise<import("./contracts").CaptureMode> {
+    const payload = await this.request<unknown>(`${this.prefix}/settings/capture`, { method: "GET" }, signal);
+    const mode = unwrap<string>(payload, ["capture_mode", "mode"]);
+    if (mode !== "capture" && mode !== "passthrough") throw new Error("workspace API returned invalid capture mode");
+    return mode;
+  }
+
+  async setCaptureMode(mode: import("./contracts").CaptureMode, signal?: AbortSignal): Promise<import("./contracts").CaptureMode> {
+    const payload = await this.request<unknown>(`${this.prefix}/settings/capture`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ capture_mode: mode }) }, signal);
+    const result = unwrap<string>(payload, ["capture_mode", "mode"]);
+    if (result !== "capture" && result !== "passthrough") throw new Error("workspace API returned invalid capture mode");
+    return result;
+  }
+
+  async getStorageStats(signal?: AbortSignal): Promise<import("./contracts").StorageStats> {
+    return unwrap<import("./contracts").StorageStats>(await this.request<unknown>(`${this.prefix}/storage`, { method: "GET" }, signal), ["stats", "storage"]);
+  }
+
+  async deleteSession(sessionId: string, signal?: AbortSignal): Promise<void> {
+    await this.request<unknown>(`${this.prefix}/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE", headers: { "content-type": "application/json" }, body: "{}" }, signal);
+  }
+
   async clearExchanges(signal?: AbortSignal): Promise<void> {
     await this.request<unknown>(`${this.prefix}/exchanges`, {
       method: "DELETE",
@@ -436,7 +458,7 @@ export class LocalWorkspaceApi implements WorkspaceApi {
     // The backend emits named SSE events (`event: completed`, etc.). Native
     // EventSource does not route those through `onmessage`, so subscribe to
     // every frozen event kind as well as the default message channel.
-    const eventKinds = ["exchange_created", "request_held", "upstream_started", "response_held", "updated", "completed", "failed", "cancelled", "dropped", "stream_event"];
+    const eventKinds = ["exchange_created", "request_held", "upstream_started", "response_held", "updated", "completed", "failed", "cancelled", "dropped", "exchange_removed", "session_removed", "stream_event"];
     for (const kind of eventKinds) source.addEventListener?.(kind, handleMessage);
     source.onerror = () => {
       try { source.close(); } catch { /* noop */ }
