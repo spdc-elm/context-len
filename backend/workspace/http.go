@@ -122,10 +122,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleArtifact(w, r, strings.TrimSuffix(strings.TrimPrefix(rest, "/artifacts/"), "/body"))
 	case strings.HasPrefix(rest, "/artifact/"):
 		s.handleArtifact(w, r, strings.TrimSuffix(strings.TrimPrefix(rest, "/artifact/"), "/body"))
+	case rest == "/settings/capture":
+		s.handleCaptureSettings(w, r)
+	case rest == "/storage":
+		s.handleStorage(w, r)
+	case strings.HasPrefix(rest, "/sessions/"):
+		s.handleSessionPath(w, r, strings.TrimPrefix(rest, "/sessions/"))
 	case rest == "/policy" || rest == "/settings/policy":
 		s.handlePolicy(w, r)
+
 	case rest == "/events" || rest == "/events/stream" || rest == "/workspace/events":
 		s.handleEvents(w, r)
+
 	default:
 		http.NotFound(w, r)
 	}
@@ -155,6 +163,82 @@ func (s *Server) handleOptions(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleCaptureSettings(w http.ResponseWriter, r *http.Request) {
+	if s.config.Capture == nil {
+		writeAPIError(w, http.StatusNotImplemented, "capture_unavailable", "capture settings unavailable")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s.writeJSON(w, http.StatusOK, map[string]string{"capture_mode": s.config.Capture.CaptureMode()})
+	case http.MethodPatch:
+		var in struct {
+			CaptureMode string `json:"capture_mode"`
+		}
+		if err := decodeJSONBody(w, r, &in); err != nil {
+			return
+		}
+		if err := s.config.Capture.SetCaptureMode(in.CaptureMode); err != nil {
+			if c, ok := s.config.Capture.(CaptureSettingsErrorClassifier); ok && c.CaptureModeError(err) != "" {
+				writeAPIError(w, http.StatusConflict, c.CaptureModeError(err), "capture mode change rejected")
+			} else if errors.Is(err, context.Canceled) {
+				writeAPIError(w, http.StatusRequestTimeout, "cancelled", "capture mode change cancelled")
+			} else {
+				writeAPIError(w, http.StatusBadRequest, "invalid_capture_mode", "invalid capture mode")
+			}
+			return
+		}
+		s.writeJSON(w, http.StatusOK, map[string]string{"capture_mode": s.config.Capture.CaptureMode()})
+	default:
+		methodNotAllowed(w, http.MethodGet, http.MethodPatch)
+	}
+}
+func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if s.config.Storage == nil {
+		writeAPIError(w, http.StatusNotImplemented, "storage_unavailable", "storage stats unavailable")
+		return
+	}
+	stats, err := s.config.Storage.StorageStats(r.Context())
+	if err != nil {
+		writeAPIError(w, http.StatusServiceUnavailable, "storage_unavailable", "storage stats unavailable")
+		return
+	}
+	if r.Method == http.MethodHead {
+		writeJSONHead(w, http.StatusOK, stats)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, stats)
+}
+func (s *Server) handleSessionPath(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodDelete {
+		methodNotAllowed(w, http.MethodDelete)
+		return
+	}
+	id, err := safePathID(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if s.config.Sessions == nil {
+		writeAPIError(w, http.StatusNotImplemented, "session_delete_unavailable", "session deletion unavailable")
+		return
+	}
+	if err := s.config.Sessions.DeleteSession(r.Context(), id); err != nil {
+		if c, ok := s.config.Sessions.(SessionDeleteErrorClassifier); ok && c.SessionDeleteError(err) != "" {
+			writeAPIError(w, http.StatusConflict, c.SessionDeleteError(err), "session has active exchanges")
+		} else if errors.Is(err, context.Canceled) {
+			writeAPIError(w, http.StatusRequestTimeout, "cancelled", "session deletion cancelled")
+		} else {
+			writeAPIError(w, http.StatusInternalServerError, "session_delete_failed", "session deletion failed")
+		}
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "session_id": id})
+}
 func (s *Server) handleExchangeClear(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		methodNotAllowed(w, http.MethodDelete)
@@ -1177,6 +1261,19 @@ func safePathID(raw string) (string, error) {
 		}
 	}
 	return decoded, nil
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, DefaultMaxRequestBytes))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return err
+	}
+	if err := json.Unmarshal(body, dst); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid request body")
+		return err
+	}
+	return nil
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, value any) {

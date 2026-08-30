@@ -64,8 +64,12 @@ type Config struct {
 	// mounted by the process app server and is intentionally public.
 	ClientAuth auth.Config
 
-	// MaxBodyBytes bounds each captured request/response body.  Zero means
-	// unlimited.  A body exceeding the limit is rejected rather than being
+	// CaptureMode controls whether ingress is observed and persisted or forwarded
+	// opaquely. Zero defaults to passthrough.
+	CaptureMode CaptureMode
+
+	// MaxBodyBytes bounds each captured request/response body. Zero means
+	// unlimited. A body exceeding the limit is rejected rather than being
 	// forwarded with a misleading complete artifact.
 	MaxBodyBytes int64
 
@@ -128,6 +132,8 @@ type Gateway struct {
 	subs         map[uint64]func(exchange.Event)
 	subID        atomic.Uint64
 	generation   atomic.Uint64
+	modeMu       sync.RWMutex
+	captureMode  CaptureMode
 	ingressMu    sync.RWMutex
 	durableErrMu sync.Mutex
 	durableErr   error
@@ -173,6 +179,9 @@ func New(cfg Config) (*Gateway, error) {
 		}
 	}
 
+	if !validCaptureMode(normalizeCaptureMode(cfg.CaptureMode)) {
+		return nil, ErrInvalidCaptureMode
+	}
 	polStore := cfg.Policy
 	if polStore == nil {
 		polStore = cfg.PolicyStore
@@ -317,6 +326,7 @@ func New(cfg Config) (*Gateway, error) {
 		observer:             cfg.Events,
 		clientAuth:           cfg.ClientAuth,
 		responseDrainTimeout: drainTimeout,
+		captureMode:          normalizeCaptureMode(cfg.CaptureMode),
 		subs:                 make(map[uint64]func(exchange.Event)),
 		sessions: func() *session.Index {
 			ix := session.NewIndex(cfg.SessionMaxPositions)
@@ -405,7 +415,103 @@ func (g *Gateway) ClearQueue(ctx context.Context) error {
 	return nil
 }
 
-// DurableError reports the most recent catalog persistence failure, if any.
+// DeleteSession atomically removes a complete session ownership unit.
+func (g *Gateway) DeleteSession(ctx context.Context, id string) error {
+	if g == nil {
+		return errors.New("gateway: unavailable")
+	}
+	if strings.TrimSpace(id) == "" {
+		return exchange.ErrNotFound
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	g.ingressMu.Lock()
+	defer g.ingressMu.Unlock()
+	if g.registry.SessionActive(id) {
+		return exchange.ErrSessionActive
+	}
+	ids, artifactIDs := []string{}, []string{}
+	for _, snap := range g.registry.List() {
+		if snap.Session != nil && snap.Session.SessionID == id {
+			ids = append(ids, snap.ExchangeID)
+			for _, ref := range snap.Request.ArtifactRefs {
+				artifactIDs = append(artifactIDs, ref.ArtifactID)
+			}
+			for _, ref := range snap.Response.ArtifactRefs {
+				artifactIDs = append(artifactIDs, ref.ArtifactID)
+			}
+		}
+	}
+	if g.catalog != nil {
+		if err := g.catalog.DeleteSession(ctx, id); err != nil {
+			return err
+		}
+	} else {
+		for _, aid := range artifactIDs {
+			if err := g.store.Delete(ctx, aid); err != nil && !errors.Is(err, persistence.ErrNotFound) {
+				return err
+			}
+		}
+	}
+	if err := g.registry.DeleteSession(id); err != nil {
+		return err
+	}
+	g.sessions.DeleteSession(id)
+	if g.catalog != nil {
+		pending, err := g.catalog.PendingBlobDeletes(ctx)
+		if err != nil {
+			return err
+		}
+		for _, b := range pending {
+			if err := g.store.RemoveContentAddressedBlob(ctx, b.StorageRef); err == nil || errors.Is(err, persistence.ErrNotFound) {
+				_ = g.catalog.MarkBlobDeleted(ctx, b.StorageRef)
+			}
+		}
+	}
+	for _, eid := range ids {
+		g.emitEvent(exchange.Event{ExchangeID: eid, Kind: exchange.EventExchangeRemoved, CreatedAt: time.Now().UTC()})
+	}
+	g.emitEvent(exchange.Event{Kind: exchange.EventSessionRemoved, CreatedAt: time.Now().UTC(), SnapshotDelta: exchange.SnapshotDelta{Session: &session.Assignment{SessionID: id}}})
+	return nil
+}
+
+func (g *Gateway) emitEvent(event exchange.Event) {
+	if g == nil {
+		return
+	}
+	g.subMu.RLock()
+	callbacks := make([]func(exchange.Event), 0, len(g.subs))
+	for _, cb := range g.subs {
+		callbacks = append(callbacks, cb)
+	}
+	g.subMu.RUnlock()
+	if g.observer != nil {
+		g.observer(event)
+	}
+	for _, cb := range callbacks {
+		cb(event)
+	}
+}
+
+// StorageStats reports configured memory and disk accounting.
+func (g *Gateway) StorageStats(ctx context.Context) (memoryUsed, memoryLimit, diskUsed, diskLimit int64, err error) {
+	if g == nil || g.store == nil {
+		return 0, 0, 0, 0, errors.New("gateway: storage unavailable")
+	}
+	s := g.store.Stats()
+	memoryUsed, memoryLimit = s.MemoryBytes, s.MaxMemoryBytes
+	diskUsed, diskLimit = s.DiskBytes, s.MaxTotalBytes
+	if g.catalog != nil {
+		cs, e := g.catalog.Stats(ctx)
+		if e != nil {
+			return 0, 0, 0, 0, e
+		}
+		diskUsed = cs.PhysicalBytes + cs.CatalogBytes
+	}
+	return
+}
+
 func (g *Gateway) DurableError() error {
 	if g == nil {
 		return nil
@@ -507,13 +613,27 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Snapshot policy at ingress.  A later policy update affects only future
-	// requests, never an exchange whose request body is still being captured.
+	// Snapshot both mode and gate policy at ingress. A toggle only affects
+	// requests entering after it is changed; an in-flight exchange retains its
+	// original mode and policy.
+	g.modeMu.RLock()
+	mode := g.captureMode
+	g.modeMu.RUnlock()
 	pol := g.policy.Get().Normalize()
 	if err := pol.Validate(); err != nil {
 		http.Error(w, "gateway policy unavailable", http.StatusInternalServerError)
 		return
 	}
+	if mode == CaptureModePassthrough {
+		if pol.RequestHeld() || pol.ResponseHeld() {
+			http.Error(w, ErrCaptureModeConflict.Error(), http.StatusConflict)
+			return
+		}
+		g.servePassthrough(w, r)
+		return
+	}
+
+	// Capture mode uses this ingress policy snapshot for the exchange.
 
 	// Capture outside the ingress lock so Clear can invalidate blocked captures.
 	requestGeneration := g.generation.Load()

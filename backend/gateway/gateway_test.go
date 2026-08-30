@@ -43,6 +43,7 @@ func localGateway(t *testing.T, p policy.Policy, upstreamHandler http.Handler) (
 	g, err := New(Config{
 		Upstream:      tr,
 		InitialPolicy: p,
+		CaptureMode:   CaptureModeCapture,
 		StoreConfig: persistence.Config{
 			MaxArtifactBytes: 1 << 20,
 			MaxTotalBytes:    16 << 20,
@@ -210,7 +211,7 @@ func TestPassPassCaptureLimitDoesNotTruncateTraffic(t *testing.T) {
 	body := []byte("0123456789")
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(body) }))
 	defer upstream.Close()
-	g, err := New(Config{UpstreamURL: upstream.URL, MaxBodyBytes: 4})
+	g, err := New(Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture, MaxBodyBytes: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestLargeBodyUsesStoredRefsAndPreservesTransportBytes(t *testing.T) {
 		_, _ = w.Write(responseBody)
 	}))
 	defer upstream.Close()
-	g, err := New(Config{UpstreamURL: upstream.URL, StoreConfig: persistence.Config{
+	g, err := New(Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture, StoreConfig: persistence.Config{
 		SpillRoot: t.TempDir(), MaxMemoryBytes: 1, MaxTotalBytes: int64(len(requestBody) + len(responseBody) + 1024),
 	}})
 	if err != nil {
@@ -279,7 +280,7 @@ func TestDurableLocalRestartWorkspaceAndBlobIntegrity(t *testing.T) {
 		_, _ = w.Write(responseBody)
 	}))
 	defer upstream.Close()
-	cfg := Config{UpstreamURL: upstream.URL, DurableCatalogPath: catalogPath,
+	cfg := Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture, DurableCatalogPath: catalogPath,
 		StoreConfig: persistence.Config{SpillRoot: spillRoot, MaxMemoryBytes: 1, MaxTotalBytes: 1 << 20}}
 	g1, err := New(cfg)
 	if err != nil {
@@ -438,7 +439,7 @@ func (p *rangeOnlyArtifactProbe) Search(ctx context.Context, id string, query []
 
 func TestDurableWorkspaceBackendPaginationArtifactsAndClear(t *testing.T) {
 	root := t.TempDir()
-	cfg := Config{UpstreamURL: "", DurableCatalogPath: filepath.Join(root, "catalog.db"), StoreConfig: persistence.Config{
+	cfg := Config{UpstreamURL: "", CaptureMode: CaptureModeCapture, DurableCatalogPath: filepath.Join(root, "catalog.db"), StoreConfig: persistence.Config{
 		SpillRoot: filepath.Join(root, "spill"), MaxMemoryBytes: 1, MaxTotalBytes: 1 << 20, PreserveFilesOnClose: true,
 	}}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

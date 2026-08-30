@@ -48,6 +48,7 @@ func captureCleanupGateway(t *testing.T, maxBody int64) (*Gateway, func()) {
 	}
 	g, err := New(Config{
 		Upstream: tr, MaxBodyBytes: maxBody,
+		CaptureMode:   CaptureModeCapture,
 		InitialPolicy: policy.Policy{RequestGate: policy.Pass, ResponseGate: policy.Pass},
 		StoreConfig:   persistence.Config{MaxArtifactBytes: 1 << 20, MaxTotalBytes: 1 << 20, MaxMemoryBytes: 1 << 20},
 	})

@@ -97,6 +97,11 @@ type Stats struct {
 	Bytes       int64
 	MemoryBytes int64
 	DiskBytes   int64
+	// Limits are configured safety budgets; zero means unlimited.
+	MaxArtifactBytes int64
+	MaxTotalBytes    int64
+	MaxMemoryBytes   int64
+	MaxArtifacts     int
 }
 
 // Store retains immutable artifact references and either an in-memory copy or
@@ -937,10 +942,14 @@ func (s *Store) Stats() Stats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Stats{
-		Artifacts:   len(s.entries),
-		Bytes:       s.usedBytes,
-		MemoryBytes: s.memoryBytes,
-		DiskBytes:   s.usedBytes - s.memoryBytes,
+		Artifacts:        len(s.entries),
+		Bytes:            s.usedBytes,
+		MemoryBytes:      s.memoryBytes,
+		DiskBytes:        s.usedBytes - s.memoryBytes,
+		MaxArtifactBytes: s.cfg.MaxArtifactBytes,
+		MaxTotalBytes:    s.cfg.MaxTotalBytes,
+		MaxMemoryBytes:   s.cfg.MaxMemoryBytes,
+		MaxArtifacts:     s.cfg.MaxArtifacts,
 	}
 }
 

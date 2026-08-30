@@ -142,7 +142,9 @@ const (
 	// streams, each client-visible SSE record reaches workspace subscribers as
 	// its own event.  Stream events carry no revision and never mutate the
 	// exchange; they exist only so realtime UI can project the stream.
-	EventStreamEvent EventKind = "stream_event"
+	EventStreamEvent     EventKind = "stream_event"
+	EventExchangeRemoved EventKind = "exchange_removed"
+	EventSessionRemoved  EventKind = "session_removed"
 )
 
 // Event is emitted after each revision is committed.  ArtifactRefs carry

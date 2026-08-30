@@ -51,6 +51,10 @@ type Exchange struct {
 	artifacts         map[string]wire.BodyArtifact
 }
 
+var (
+	ErrSessionActive = errors.New("exchange: session has active exchanges")
+)
+
 var exchangeIDCounter atomic.Uint64
 var eventIDCounter atomic.Uint64
 
@@ -314,6 +318,58 @@ func (r *Registry) List() []Snapshot {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out
+}
+
+// SessionActive reports whether any exchange in the session is non-terminal.
+func (r *Registry) SessionActive(sessionID string) bool {
+	if r == nil || sessionID == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, e := range r.items {
+		e.mu.Lock()
+		active := e.snap.Session != nil && e.snap.Session.SessionID == sessionID && !e.snap.State.Terminal()
+		e.mu.Unlock()
+		if active {
+			return true
+		}
+	}
+	return false
+}
+
+// Active exchanges are rejected before mutation so callers can return conflict;
+// there is intentionally no per-turn deletion API.
+func (r *Registry) DeleteSession(sessionID string) error {
+	if r == nil || sessionID == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.items {
+		e.mu.Lock()
+		match := e.snap.Session != nil && e.snap.Session.SessionID == sessionID
+		active := match && !e.snap.State.Terminal()
+		e.mu.Unlock()
+		if active {
+			return ErrSessionActive
+		}
+	}
+	for id, e := range r.items {
+		e.mu.Lock()
+		match := e.snap.Session != nil && e.snap.Session.SessionID == sessionID
+		e.mu.Unlock()
+		if match {
+			delete(r.items, id)
+			e.clear()
+		}
+	}
+	for id, snap := range r.restored {
+		if snap.Session != nil && snap.Session.SessionID == sessionID {
+			delete(r.restored, id)
+		}
+	}
+	return nil
 }
 
 // Clear removes every exchange from the registry. Active exchanges are

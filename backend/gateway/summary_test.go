@@ -20,7 +20,7 @@ func TestSummaryProjectionOnPassPath(t *testing.T) {
 		_, _ = w.Write([]byte(upstreamBody))
 	}))
 	defer upstream.Close()
-	g2, err := New(Config{UpstreamURL: upstream.URL})
+	g2, err := New(Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestSummaryStreamContextTokens(t *testing.T) {
 		_, _ = w.Write([]byte(sse))
 	}))
 	defer upstream.Close()
-	g, err := New(Config{UpstreamURL: upstream.URL})
+	g, err := New(Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestSummaryDroppedForUnparseableBody(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer upstream.Close()
-	g, err := New(Config{UpstreamURL: upstream.URL})
+	g, err := New(Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture})
 	if err != nil {
 		t.Fatal(err)
 	}

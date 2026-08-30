@@ -62,7 +62,7 @@ func TestRestartHydratesMetadataAndUsesWAL(t *testing.T) {
 	}
 }
 
-func TestPinDeletionAndBlobSweepLifecycle(t *testing.T) {
+func TestExplicitDeletionIgnoresLegacyPinAndSweepsBlob(t *testing.T) {
 	ctx := context.Background()
 	c, err := Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -79,10 +79,8 @@ func TestPinDeletionAndBlobSweepLifecycle(t *testing.T) {
 	must(c.UpsertExchange(ctx, Exchange{ID: "e", SessionID: "s"}))
 	must(c.UpsertBlob(ctx, Blob{StorageRef: "b", SHA256: "hash", Size: 10}))
 	must(c.PutArtifactRef(ctx, ArtifactRef{ID: "a", ExchangeID: "e", Stage: "response.upstream", Direction: "upstream", Size: 10, SHA256: "hash", StorageRef: "b"}))
-	if err = c.DeleteSession(ctx, "s"); !errors.Is(err, ErrPinned) {
-		t.Fatalf("got %v", err)
-	}
-	must(c.SetPinned(ctx, "s", false))
+	must(c.DeleteSession(ctx, "s"))
+	// Repeating the same explicit deletion is a no-op.
 	must(c.DeleteSession(ctx, "s"))
 	pending, err := c.PendingBlobDeletes(ctx)
 	if err != nil || len(pending) != 1 || pending[0].StorageRef != "b" {
@@ -91,6 +89,52 @@ func TestPinDeletionAndBlobSweepLifecycle(t *testing.T) {
 	must(c.MarkBlobDeleted(ctx, "b"))
 	if _, err = c.GetSession(ctx, "s"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("session lookup %v", err)
+	}
+}
+
+func TestDeleteSessionPreservesSharedBlobUntilLastOwner(t *testing.T) {
+	ctx := context.Background()
+	c, err := Open(filepath.Join(t.TempDir(), "shared.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	for _, id := range []string{"one", "two"} {
+		if err := c.UpsertSession(ctx, Session{ID: "s-" + id}); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.UpsertExchange(ctx, Exchange{ID: "e-" + id, SessionID: "s-" + id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.UpsertBlob(ctx, Blob{StorageRef: "shared", SHA256: "hash", Size: 12}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"one", "two"} {
+		if err := c.PutArtifactRef(ctx, ArtifactRef{ID: "a-" + id, ExchangeID: "e-" + id, StorageRef: "shared", SHA256: "hash", Size: 12}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats, err := c.Stats(ctx)
+	if err != nil || stats.PhysicalBytes != 12 || stats.LogicalArtifacts != 2 {
+		t.Fatalf("stats %+v %v", stats, err)
+	}
+	if err := c.DeleteSession(ctx, "s-one"); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := c.PendingBlobDeletes(ctx); err != nil || len(pending) != 0 {
+		t.Fatalf("pending after first owner %+v %v", pending, err)
+	}
+	blobs, err := c.ListBlobs(ctx)
+	if err != nil || len(blobs) != 1 || blobs[0].RefCount != 1 {
+		t.Fatalf("blobs %+v %v", blobs, err)
+	}
+	if err := c.DeleteSession(ctx, "s-two"); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := c.PendingBlobDeletes(ctx)
+	if err != nil || len(pending) != 1 || pending[0].RefCount != 0 {
+		t.Fatalf("pending after last owner %+v %v", pending, err)
 	}
 }
 

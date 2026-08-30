@@ -103,8 +103,16 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid CONTEXT_LENS_UPSTREAM: %v", err)
 		}
+		wb := gatewayServer.WorkspaceBackend()
 		workspaceServer = workspace.New(workspace.Config{
-			Backend:          gatewayServer.WorkspaceBackend(),
+			Backend: wb,
+			Capture: gatewayServer.WorkspaceCapture(),
+			Storage: wb.(interface {
+				StorageStats(context.Context) (workspace.StorageStats, error)
+			}),
+			Sessions: wb.(interface {
+				DeleteSession(context.Context, string) error
+			}),
 			Artifacts:        gatewayServer.Store(),
 			Policy:           gatewayServer.Policy(),
 			Events:           gatewayServer,

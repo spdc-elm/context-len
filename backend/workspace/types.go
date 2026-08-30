@@ -139,6 +139,25 @@ type ArtifactErrorClassifier interface {
 	ArtifactHTTPError() (status int, code, message string)
 }
 
+type CaptureSettings interface {
+	CaptureMode() string
+	SetCaptureMode(string) error
+}
+
+type CaptureSettingsErrorClassifier interface{ CaptureModeError(error) string }
+type StorageStats struct {
+	MemoryUsed  int64 `json:"memory_used"`
+	MemoryLimit int64 `json:"memory_limit"`
+	DiskUsed    int64 `json:"disk_used"`
+	DiskLimit   int64 `json:"disk_limit"`
+}
+type StorageStatsProvider interface {
+	StorageStats(context.Context) (StorageStats, error)
+}
+type SessionDeleter interface {
+	DeleteSession(context.Context, string) error
+}
+type SessionDeleteErrorClassifier interface{ SessionDeleteError(error) string }
 type Config struct {
 	// Backend is preferred.  Registry is a convenience for adapting the
 	// current exchange.Registry when no backend has been supplied.
@@ -152,6 +171,9 @@ type Config struct {
 
 	Artifacts ArtifactStore
 	Policy    PolicyStore
+	Capture   CaptureSettings
+	Storage   StorageStatsProvider
+	Sessions  SessionDeleter
 	Events    any
 
 	// Prefix is normally /api.  It must be an absolute path and has no

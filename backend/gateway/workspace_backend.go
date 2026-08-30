@@ -114,6 +114,42 @@ func (b *workspaceBackend) CommandContext(_ context.Context, c exchange.Command)
 	return b.fallback.Command(c)
 }
 
-var _ workspace.ExchangeBackend = (*workspaceBackend)(nil)
-var _ workspace.PagedExchangeBackend = (*workspaceBackend)(nil)
+type captureAdapter struct{ gateway *Gateway }
+
+func (a captureAdapter) CaptureMode() string { return string(a.gateway.CaptureMode()) }
+func (a captureAdapter) SetCaptureMode(mode string) error {
+	return a.gateway.SetCaptureMode(CaptureMode(mode))
+}
+func (a captureAdapter) CaptureModeError(err error) string {
+	if errors.Is(err, ErrCaptureModeConflict) {
+		return "capture_mode_conflict"
+	}
+	return ""
+}
+func (g *Gateway) WorkspaceCapture() workspace.CaptureSettings { return captureAdapter{gateway: g} }
+
+func (b *workspaceBackend) SessionDeleteError(err error) string {
+	if errors.Is(err, exchange.ErrSessionActive) {
+		return "session_active"
+	}
+	return ""
+}
+
+func (b *workspaceBackend) DeleteSession(ctx context.Context, id string) error {
+	if b == nil || b.gateway == nil {
+		return errors.New("workspace: backend unavailable")
+	}
+	return b.gateway.DeleteSession(ctx, id)
+}
+func (b *workspaceBackend) StorageStats(ctx context.Context) (workspace.StorageStats, error) {
+	if b == nil || b.gateway == nil {
+		return workspace.StorageStats{}, errors.New("workspace: backend unavailable")
+	}
+	m, ml, d, dl, err := b.gateway.StorageStats(ctx)
+	return workspace.StorageStats{MemoryUsed: m, MemoryLimit: ml, DiskUsed: d, DiskLimit: dl}, err
+}
+
+var _ workspace.SessionDeleter = (*workspaceBackend)(nil)
+var _ workspace.StorageStatsProvider = (*workspaceBackend)(nil)
+
 var _ workspace.ContextExchangeBackend = (*workspaceBackend)(nil)

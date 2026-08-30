@@ -22,7 +22,7 @@ func TestWorkspaceGatewayHoldHold(t *testing.T) {
 		_, _ = w.Write(upstreamBody)
 	}))
 	defer upstream.Close()
-	g, err := gateway.New(gateway.Config{UpstreamURL: upstream.URL, InitialPolicy: policy.Policy{RequestGate: policy.GateHold, ResponseGate: policy.GateHold}})
+	g, err := gateway.New(gateway.Config{UpstreamURL: upstream.URL, CaptureMode: gateway.CaptureModeCapture, InitialPolicy: policy.Policy{RequestGate: policy.GateHold, ResponseGate: policy.GateHold}})
 	if err != nil {
 		t.Fatal(err)
 	}

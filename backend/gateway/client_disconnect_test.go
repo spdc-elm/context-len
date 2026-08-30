@@ -214,6 +214,7 @@ func TestDrainTimeoutCompletesWithIncompleteArtifact(t *testing.T) {
 	}
 	g, err := New(Config{
 		Upstream:             tr,
+		CaptureMode:          CaptureModeCapture,
 		InitialPolicy:        policy.Default(),
 		ResponseDrainTimeout: 150 * time.Millisecond,
 		StoreConfig: persistence.Config{

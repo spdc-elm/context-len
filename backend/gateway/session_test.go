@@ -39,7 +39,7 @@ func TestSessionAssignmentThroughGateway(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"chatcmpl_1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1}}`))
 	}))
 	defer upstream.Close()
-	g, err := New(Config{UpstreamURL: upstream.URL})
+	g, err := New(Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestSessionResponseIDContinuation(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"resp_seq_1","object":"response","status":"completed","output":[],"usage":{"input_tokens":4}}`))
 	}))
 	defer upstream.Close()
-	g, err := New(Config{UpstreamURL: upstream.URL})
+	g, err := New(Config{UpstreamURL: upstream.URL, CaptureMode: CaptureModeCapture})
 	if err != nil {
 		t.Fatal(err)
 	}

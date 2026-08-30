@@ -31,7 +31,7 @@ func TestGatewayFixturePassPass(t *testing.T) {
 				_, _ = w.Write(respBody)
 			}))
 			defer upstream.Close()
-			g, err := gateway.New(gateway.Config{UpstreamURL: upstream.URL})
+			g, err := gateway.New(gateway.Config{UpstreamURL: upstream.URL, CaptureMode: gateway.CaptureModeCapture})
 			if err != nil {
 				t.Fatal(err)
 			}

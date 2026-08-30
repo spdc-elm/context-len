@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -22,7 +23,10 @@ var (
 	ErrInvalidCursor = errors.New("catalog: invalid cursor")
 )
 
-type Catalog struct{ db *sql.DB }
+type Catalog struct {
+	db   *sql.DB
+	path string
+}
 
 // Open opens (or creates) a WAL-mode catalog and applies migrations.
 func Open(path string) (*Catalog, error) {
@@ -34,7 +38,7 @@ func Open(path string) (*Catalog, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	c := &Catalog{db: db}
+	c := &Catalog{db: db, path: path}
 	if err = c.migrate(context.Background()); err != nil {
 		db.Close()
 		return nil, err
@@ -158,6 +162,45 @@ type Blob struct {
 type Event struct {
 	ID                                           int64
 	SessionID, Kind, Metadata, CreatedAt, Cursor string
+}
+
+// Stats is metadata-only catalog accounting. PhysicalBytes counts indexed blob
+// sizes (including pending deletion); LogicalArtifacts counts artifact refs.
+type Stats struct {
+	PhysicalBytes    int64
+	LogicalArtifacts int64
+	CatalogBytes     int64
+}
+
+// Stats returns durable metadata accounting without reading any body bytes.
+func (c *Catalog) Stats(ctx context.Context) (Stats, error) {
+	if c == nil || c.db == nil {
+		return Stats{}, ErrNotFound
+	}
+	var s Stats
+	if err := c.db.QueryRowContext(ctx, "SELECT COALESCE(SUM(size),0) FROM blobs").Scan(&s.PhysicalBytes); err != nil {
+		return s, err
+	}
+	if err := c.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM artifact_refs").Scan(&s.LogicalArtifacts); err != nil {
+		return s, err
+	}
+	s.CatalogBytes = DiskBytes(c.path)
+	return s, nil
+}
+
+// DiskBytes reports the SQLite catalog file size when path points at a file.
+// WAL sidecar bytes are included when present.
+func DiskBytes(path string) int64 {
+	if path == "" {
+		return 0
+	}
+	var total int64
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if st, err := os.Stat(p); err == nil {
+			total += st.Size()
+		}
+	}
+	return total
 }
 
 func (c *Catalog) UpsertSnapshot(ctx context.Context, s Session, x Exchange, refs []ArtifactRef, ev Event) error {
@@ -316,17 +359,17 @@ func (c *Catalog) SetPinned(ctx context.Context, id string, pinned bool) error {
 	return nil
 }
 
-// DeleteSession removes one complete ownership unit. Pinned sessions are protected.
+// DeleteSession removes one complete ownership unit. Legacy pinned metadata does
+// not prevent an explicit whole-session deletion.
 // Blob rows that lose their last relation remain as delete_pending work for the external repository sweeper.
 func (c *Catalog) DeleteSession(ctx context.Context, id string) error {
 	return c.Tx(ctx, func(tx *sql.Tx) error {
-		var pinned bool
-		if e := tx.QueryRowContext(ctx, "SELECT pinned FROM sessions WHERE id=?", id).Scan(&pinned); errors.Is(e, sql.ErrNoRows) {
-			return ErrNotFound
-		} else if e != nil {
+		var exists bool
+		if e := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?)", id).Scan(&exists); e != nil {
 			return e
-		} else if pinned {
-			return ErrPinned
+		} else if !exists {
+			// Deletion is idempotent. A missing session is already deleted.
+			return nil
 		}
 		rows, e := tx.QueryContext(ctx, `SELECT DISTINCT br.storage_ref FROM blob_relations br JOIN artifact_refs a ON a.id=br.artifact_id JOIN exchanges x ON x.id=a.exchange_id WHERE x.session_id=?`, id)
 		if e != nil {
@@ -351,6 +394,9 @@ func (c *Catalog) DeleteSession(ctx context.Context, id string) error {
 			if _, e = tx.ExecContext(ctx, `UPDATE blobs SET ref_count=(SELECT COUNT(*) FROM blob_relations WHERE storage_ref=?),delete_pending=CASE WHEN NOT EXISTS(SELECT 1 FROM blob_relations WHERE storage_ref=?) THEN 1 ELSE delete_pending END WHERE storage_ref=?`, r, r, r); e != nil {
 				return e
 			}
+		}
+		if _, e = tx.ExecContext(ctx, `INSERT INTO events(session_id,kind,metadata,created_at,cursor) VALUES(?,?,?,?,?)`, id, "session_deleted", `{"deleted":true}`, now(), ""); e != nil {
+			return e
 		}
 		return nil
 	})

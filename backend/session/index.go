@@ -192,6 +192,17 @@ func (ix *Index) Clear() {
 	ix.mu.Unlock()
 }
 
+// DeleteSession removes all in-memory positions, response links, and exchange
+// placement for one session. It is idempotent and never exposes per-turn delete.
+func (ix *Index) DeleteSession(sessionID string) {
+	if ix == nil || sessionID == "" {
+		return
+	}
+	ix.mu.Lock()
+	ix.evictSessionLocked(sessionID)
+	ix.mu.Unlock()
+}
+
 // Stats is a metadata-only diagnostic for tests and operators.
 func (ix *Index) Stats() (positions, sessions int) {
 	ix.mu.Lock()
