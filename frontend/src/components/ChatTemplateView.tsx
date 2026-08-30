@@ -642,6 +642,16 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
       data-live={streaming ? "true" : undefined}
     >
       <div className={`chat-template-heading${toolbarCollapsed ? " chat-template-heading-collapsed" : ""}`} role="toolbar" aria-label="Chat Template toolbar">
+        <button
+          type="button"
+          className="chat-toolbar-toggle"
+          aria-expanded={!toolbarCollapsed}
+          aria-label={toolbarCollapsed ? "Expand Chat Template toolbar" : "Collapse Chat Template toolbar"}
+          title={toolbarCollapsed ? "Expand toolbar" : "Collapse toolbar"}
+          onClick={() => setToolbarCollapsed((current) => !current)}
+        >
+          <span className="chat-toolbar-caret" aria-hidden="true" />
+        </button>
         <strong>{QWEN_CHAT_TEMPLATE_NAME}</strong>
         {!toolbarCollapsed && <>
           {turns && turnCount > 0 ? (
@@ -690,16 +700,6 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
             </button>
           ) : null}
         </>}
-        <button
-          type="button"
-          className="chat-toolbar-toggle"
-          aria-expanded={!toolbarCollapsed}
-          aria-label={toolbarCollapsed ? "Expand Chat Template toolbar" : "Collapse Chat Template toolbar"}
-          title={toolbarCollapsed ? "Expand toolbar" : "Collapse toolbar"}
-          onClick={() => setToolbarCollapsed((current) => !current)}
-        >
-          <span className="chat-toolbar-caret" aria-hidden="true" />
-        </button>
       </div>
       {document.warnings.length > 0 && !isSse && !useSessionScope && (
         <div className="warning-box">
