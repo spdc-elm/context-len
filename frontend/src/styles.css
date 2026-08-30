@@ -360,7 +360,7 @@ body.pane-resizing .pane-divider::before { background: var(--accent-strong); }
 }
 .chat-template-heading > strong { min-width: 0; color: var(--accent); }
 .chat-template-heading span { color: var(--muted); font-size: 10px; }
-.chat-template-heading-collapsed { margin-bottom: 8px; padding-top: 7px; padding-bottom: 7px; }
+.chat-template-heading-collapsed { margin-bottom: 4px; padding: 2px 4px; min-height: 11px; }
 .chat-template-heading-collapsed > .chat-toolbar-toggle { margin-left: 0; }
 .chat-scope-toggle { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
 .chat-scope-button { padding: 3px 9px; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: 10.5px; font-weight: 600; }

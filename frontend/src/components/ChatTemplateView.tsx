@@ -652,7 +652,7 @@ export function ChatTemplateView({ protocol, body, artifact, live, turns, select
         >
           <span className="chat-toolbar-caret" aria-hidden="true" />
         </button>
-        <strong>{QWEN_CHAT_TEMPLATE_NAME}</strong>
+        {!toolbarCollapsed && <strong>{QWEN_CHAT_TEMPLATE_NAME}</strong>}
         {!toolbarCollapsed && <>
           {turns && turnCount > 0 ? (
             <div className="chat-scope-toggle" role="group" aria-label="Chat template scope">

@@ -108,6 +108,7 @@ describe("ChatTemplateView", () => {
     expect(rendered.querySelector(".chat-fold-toggle")).not.toBeNull();
     click(toggle);
     expect(toolbar?.classList.contains("chat-template-heading-collapsed")).toBe(true);
+    expect(rendered.querySelector(".chat-template-heading-collapsed strong")).toBeNull();
     expect(rendered.querySelector(".chat-toolbar-toggle")?.getAttribute("aria-expanded")).toBe("false");
     expect(rendered.querySelector(".chat-fold-toggle")).toBeNull();
     click(rendered.querySelector(".chat-toolbar-toggle"));
