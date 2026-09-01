@@ -2,7 +2,7 @@
 
 > **See what your model sees.** 看见真正进入模型上下文的一切，从系统提示词、可调用的工具，到 skills、memory，以及每一条最终决定模型如何理解和回应的隐藏上下文。
 >
-> Context Lens 让模型眼中的世界第一次清晰可见。
+> Context Lens 让模型眼中的世界清晰可见。
 
 ![Context Lens 首页](https://cdn.jsdelivr.net/gh/fvjowe/imagebed@main/img/20260901194923346.png)
 
