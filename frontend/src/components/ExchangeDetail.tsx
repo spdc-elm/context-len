@@ -260,35 +260,21 @@ function ProjectionBody({ exchange, tab, body, artifact, bodyComplete = true, li
   );
 }
 
-function ArtifactPicker({ exchange, activeTab, selectedArtifactId, loadedBodies, bodyLoading, bodyLoadErrorArtifactId, onDownloadBody, onRetryBody, onLoadBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "loadedBodies" | "bodyLoading" | "bodyLoadErrorArtifactId" | "onDownloadBody" | "onRetryBody" | "onLoadBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
+function ArtifactPicker({ exchange, activeTab, selectedArtifactId, bodyLoading, bodyLoadErrorArtifactId, onDownloadBody, onRetryBody, onArtifactSelect }: Pick<ExchangeDetailProps, "exchange" | "activeTab" | "bodyLoading" | "bodyLoadErrorArtifactId" | "onDownloadBody" | "onRetryBody"> & { selectedArtifactId?: string; onArtifactSelect: (artifactId: string) => void }) {
   if (!exchange) return null;
   const refs = allArtifacts(exchange);
   const preferred = artifactForTab(exchange, activeTab, selectedArtifactId);
-  const [rangeStart, setRangeStart] = useState("0");
-  const [rangeEnd, setRangeEnd] = useState("");
-  const loaded = preferred ? loadedBodies[preferred.artifact_id] : undefined;
-  const loadRange = () => {
-    if (!preferred) return;
-    const start = Math.max(0, Number.parseInt(rangeStart, 10) || 0);
-    const parsedEnd = Number.parseInt(rangeEnd, 10);
-    onLoadBody(preferred, { start, end: Number.isFinite(parsedEnd) && parsedEnd > start ? parsedEnd : undefined });
-  };
   return (
     <div className="artifact-picker">
       <span className="picker-label">Artifact</span>
       <select name="artifact" aria-label="Artifact" value={preferred?.artifact_id ?? ""} onChange={(event) => {
         const ref = refs.find((artifact) => artifact.artifact_id === event.target.value);
-        if (ref) {
-          onArtifactSelect(ref.artifact_id);
-        }
+        if (ref) onArtifactSelect(ref.artifact_id);
       }}>
         {refs.length === 0 && <option value="">No artifacts</option>}
         {refs.map((artifact) => <option value={artifact.artifact_id} key={artifact.artifact_id}>{artifact.stage} · {artifact.size.toLocaleString()} B{artifact.complete ? "" : " · incomplete"}</option>)}
       </select>
       {preferred && <>
-        <span className="artifact-load-status">{bodyLoading ? "Loading…" : bodyLoadErrorArtifactId === preferred.artifact_id ? "Failed" : loadedBodies[preferred.artifact_id] ? "Loaded" : "Waiting…"}</span>
-        {loaded && <span className="artifact-range-status">Range {loaded.start.toLocaleString()}–{loaded.end.toLocaleString()} / {loaded.totalSize.toLocaleString()} B{loaded.complete ? " · complete" : " · preview"}</span>}
-        {(preferred.size > (1 << 20) || loaded?.complete === false) && <><input aria-label="Artifact range start" type="number" min="0" value={rangeStart} onChange={(event) => setRangeStart(event.target.value)} /><input aria-label="Artifact range end" type="number" min="0" value={rangeEnd} onChange={(event) => setRangeEnd(event.target.value)} placeholder="end" /><button type="button" className="button quiet" onClick={loadRange} disabled={bodyLoading}>Load range</button></>}
         {bodyLoadErrorArtifactId === preferred.artifact_id && <button type="button" className="button quiet" onClick={() => onRetryBody(preferred)} disabled={bodyLoading}>Retry</button>}
         <button type="button" className="button quiet" onClick={() => onDownloadBody(preferred)} disabled={bodyLoading} aria-label={`Download ${preferred.artifact_id}`}>Download</button>
       </>}
@@ -565,7 +551,7 @@ export function ExchangeDetail({
           <div className="toolbar-right">
             {showViewerSearch && <label className="viewer-search"><span>Search</span><input name="search" aria-label="Search raw JSON" type="search" value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Find in raw JSON" />{search && <button type="button" className="viewer-search-clear" aria-label="Clear search" onClick={() => onSearchChange("")}>×</button>}</label>}
             <LayoutToggle split={split} splitAvailable={isWide} onSelect={setSplitPref} />
-            <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} loadedBodies={loadedBodies} bodyLoading={bodyLoading} bodyLoadErrorArtifactId={bodyLoadErrorArtifactId} onRetryBody={onRetryBody} onLoadBody={onLoadBody} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
+            <ArtifactPicker exchange={exchange} activeTab={activeTab} selectedArtifactId={selectedArtifactId} bodyLoading={bodyLoading} bodyLoadErrorArtifactId={bodyLoadErrorArtifactId} onRetryBody={onRetryBody} onDownloadBody={onDownloadBody} onArtifactSelect={setSelectedArtifactId} />
           </div>
         </div>
         {sessionLineage && sessionLineage.length > lineageLimit && <button type="button" className="button quiet" onClick={() => setLineageLimit((limit) => limit + 8)}>Load older context ({sessionLineage.length - lineageLimit} turns)</button>}

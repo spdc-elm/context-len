@@ -160,7 +160,6 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .mutation-editor textarea:focus { border-color: var(--warning); }
 .editor-actions { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-top: 10px; }
 .artifact-picker .button { white-space: nowrap; }
-.artifact-load-status { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .action-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 17px; }
 .action-group { display: flex; align-items: center; gap: 8px; }
 .action-label { margin-right: 5px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
@@ -255,7 +254,8 @@ html, body, #root { width: 100%; height: 100%; overflow: hidden; }
 .topbar-tools { display: flex; align-items: center; gap: 20px; }
 .gate-controls { display: flex; align-items: center; gap: 14px; }
 .topbar-section-label { color: var(--muted); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
-.gate-control { display: flex; align-items: center; gap: 7px; color: var(--subtle); font-size: 11px; }
+.gate-control, .capture-control { display: flex; align-items: center; gap: 7px; color: var(--subtle); font-size: 11px; }
+.capture-control strong { color: var(--subtle); font-size: 11px; font-weight: 700; }
 .gate-label { color: var(--muted); }
 .theme-toggle, .collapse-button { border: 1px solid var(--line); border-radius: 6px; color: var(--subtle); background: var(--surface); cursor: pointer; }
 .theme-toggle { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 9px; font-size: 11px; }
