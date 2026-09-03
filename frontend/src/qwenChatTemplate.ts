@@ -6,7 +6,6 @@ export interface RenderedContextBlock {
 }
 
 export const QWEN_CHAT_TEMPLATE_NAME = "Chat Template · Qwen ChatML";
-export const QWEN_DEFAULT_SYSTEM = "You are Qwen, created by Alibaba Cloud. You are a helpful assistant.";
 export const QWEN_TOOLS_HEADER =
   "# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:";
 
@@ -52,9 +51,11 @@ export function qwenBlockRole(block: ContextBlock): string {
 function blockBody(block: ContextBlock): string {
   if (block.kind === "tool_definition") {
     const definitions = block.content.map((item) => item.value);
-    return `${block.text || QWEN_DEFAULT_SYSTEM}\n\n${QWEN_TOOLS_HEADER}\n<tools>\n${definitions
+    const toolHeader = `${QWEN_TOOLS_HEADER}\n<tools>\n${definitions
       .map((definition) => safeJson(definition))
       .join("\n")}\n</tools>\n\n${QWEN_TOOL_CALL_INSTRUCTION}`;
+    // Never invent a provider/system prompt when the request did not contain one.
+    return block.text ? `${block.text}\n\n${toolHeader}` : toolHeader;
   }
   if (block.kind === "tool_call") {
     const name = block.toolName ?? "unknown_tool";

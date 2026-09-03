@@ -62,6 +62,24 @@ describe("normalizeContext", () => {
   });
 });
 
+describe("Responses tool definitions", () => {
+  it("normalizes nested Codex additional_tools without mapping its wrapper as developer content", () => {
+    const wrapper = { type: "additional_tools", role: "developer", tools: [{ type: "function", name: "shell", description: "run", parameters: { type: "object" } }], opaque: "preserve" };
+    const document = normalizeContext("responses", JSON.stringify({ input: [wrapper] }));
+    const definitions = document.blocks.filter((item) => item.kind === "tool_definition");
+    expect(definitions).toHaveLength(1);
+    expect(definitions[0].toolName).toBe("shell");
+    expect(definitions[0].sourcePointer).toBe("/input/0/tools/0");
+    expect(definitions[0].providerExtensions?.sourceWrapper).toEqual(wrapper);
+    expect(document.blocks.some((item) => item.kind === "developer")).toBe(false);
+  });
+
+  it("normalizes Responses top-level tools as tool definitions", () => {
+    const document = normalizeContext("responses", JSON.stringify({ tools: [{ type: "function", name: "lookup", parameters: {} }] }));
+    expect(document.blocks.filter((item) => item.kind === "tool_definition")[0]?.sourcePointer).toBe("/tools/0");
+  });
+});
+
 describe("Responses custom tool items", () => {
   it("maps custom_tool_call_output to a tool result block", () => {
     const document = normalizeContext("responses", JSON.stringify({

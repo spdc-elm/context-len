@@ -5,7 +5,6 @@ import type { MergedSession, MergedTurn } from "../mergedSession";
 import { formatTokens } from "../format";
 import {
   QWEN_CHAT_TEMPLATE_NAME,
-  QWEN_DEFAULT_SYSTEM,
   QWEN_TOOL_CALL_INSTRUCTION,
   qwenBlockRole,
   renderQwenBlock,
@@ -181,7 +180,7 @@ function blockToSegment(block: ContextBlock, index: number): TagSegment {
   const role = qwenBlockRole(block);
   const children: Segment[] = [];
   if (block.kind === "tool_definition") {
-    children.push(...textOrScopes(`${block.id}/system`, block.text || QWEN_DEFAULT_SYSTEM));
+    children.push(...textOrScopes(`${block.id}/system`, block.text ?? ""));
     const toolsName = scopeByName(registry, "tools")?.name ?? "tools";
     children.push({
       kind: "tag",

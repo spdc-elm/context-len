@@ -87,15 +87,17 @@ function addTextOrParts(out: ContextBlock[], role: ContextBlockKind, value: unkn
   parent.text = texts.join("\n") || undefined;
   out.push(parent);
 }
-function addToolDefinition(out: ContextBlock[], tool: unknown, sourcePointer: string): void {
+function addToolDefinition(out: ContextBlock[], tool: unknown, sourcePointer: string, wrapper?: unknown): void {
   const record = isRecord(tool) ? tool : {};
   const fn = isRecord(record.function) ? record.function : record;
   const name = typeof fn.name === "string" ? fn.name : undefined;
+  const extensions = wrapper === undefined ? undefined : { sourceWrapper: wrapper };
   out.push(block("tool_definition", sourcePointer, tool, {
     role: "system",
     toolName: name,
     text: name ? `Tool ${name}` : "Tool definition",
     content: [part("tool_definition", tool, sourcePointer)],
+    ...(extensions ? { providerExtensions: extensions } : {}),
   }));
 }
 function addToolCall(out: ContextBlock[], call: unknown, sourcePointer: string, owner?: unknown): void {
@@ -152,6 +154,13 @@ function addResponsesItem(out: ContextBlock[], item: unknown, sourcePointer: str
   // that way, so the projection must not diverge into unknown passthrough.
   if (type === "unknown" && typeof item.role === "string" && item.role !== "") type = "message";
   if (type === "message") addTextOrParts(out, roleKind(item.role ?? "assistant"), item.content, pointer(sourcePointer, "content"), item);
+  else if (type === "additional_tools") {
+    // Codex Responses requests wrap tool definitions in an input item. Keep
+    // each tool independently addressable while retaining the complete wrapper
+    // as derived metadata so unknown fields are never discarded.
+    if (Array.isArray(item.tools)) item.tools.forEach((tool, index) => addToolDefinition(out, tool, pointer(pointer(sourcePointer, "tools"), index), item));
+    else out.push(block("unknown", sourcePointer, item, { passthrough: item, content: [part(type, item, sourcePointer)] }));
+  }
   else if (type === "function_call" || type === "custom_tool_call") addToolCall(out, item, sourcePointer);
   else if (type === "function_call_output" || type === "custom_tool_call_output") addToolResult(out, item, sourcePointer);
   else if (type === "reasoning") {

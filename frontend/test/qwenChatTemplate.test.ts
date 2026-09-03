@@ -14,6 +14,13 @@ describe("Qwen ChatML renderer", () => {
     expect(rendered).not.toContain("accuracy");
   });
 
+  it("does not fabricate the Qwen default system sentence for tool-only requests", () => {
+    const document = normalizeContext("responses", JSON.stringify({ input: [{ type: "additional_tools", role: "developer", tools: [{ type: "function", name: "shell", parameters: {} }] }] }));
+    const rendered = renderQwenChatML(document);
+    expect(rendered).toContain("<|im_start|>system\n# Tools");
+    expect(rendered).toContain('"name": "shell"');
+    expect(rendered).not.toContain("You are Qwen, created by Alibaba Cloud");
+  });
   it("formats tool arguments while retaining the source block", () => {
     const document = normalizeContext("chat_completions", JSON.stringify({ messages: [{ role: "assistant", tool_calls: [{ id: "t", type: "function", function: { name: "lookup", arguments: "{\"key\":\"alpha\"}" } }] }] }));
     const blocks = renderQwenBlocks(document);
